@@ -1,0 +1,177 @@
+# Protocol
+
+// TODO include the message json for each message type here
+// TODO maybe using a custom macro is a good way to ensure consistency???
+
+[id=Produce]
+## `Produce` (0)
+
+Sent from a producer to a broker.
+
+[id=Fetch]
+## `Fetch` (1)
+
+Sent from a consumer (or a broker) to a broker.
+
+[id=ListOffsets]
+## `ListOffsets` (2)
+
+???
+
+[id=Metadata]
+## `Metadata` (3)
+
+Sent from a client to a broker to discover the current state of the cluster.
+
+[id=LeaderAndIsr]
+## `LeaderAndIsr` (4)
+
+Sent from controller to specific other brokers to update their notion of leader and ISR for given partitions.
+
+This is sent:
+
+* During partition reassignment (e.g. when a new follower enters the ISR)
+* On partition leader changes (such as during reassignment)
+
+The controller sends these requests at the same time as any `UpdateMetadataRequest` and `StopReplicaRequest`.
+
+[id=StopReplica]
+## `StopReplica` (5)
+
+Send from controller to a specific broker during <<controlled-shutdown,controlled shutdown>>.
+
+[id=UpdateMetadata]
+## `UpdateMetadata` (6)
+
+Sent from the controller to specific other brokers to update their metadata.
+
+This is sent:
+
+* on controller failover (i.e. when a new controller is elected)
+* when a new broker starts up
+* when a broker is modified to change its endpoints
+* when a replica goes offline (i.e. a broker leaves ISR)
+* when a partition is reassigned
+* when the ISR changes
+
+[[ControllerShutdown]]
+## `ControlledShutdown` (7)
+
+Part of <<controlled-shutdown,controlled shutdown>>.
+
+[[OffsetCommit]]
+## `OffsetCommit` (8)
+
+[[OffsetFetch]]
+## `OffsetFetch` (9)
+
+[[FindCoordinator]]
+## `FindCoordinator` (10)
+
+<<coordinator-discovery,Coordinator discovery>>, part of the <<group-protocol>> used for consumers and transactions.
+
+[[JoinGroup]]
+## `JoinGroup` (11)
+
+<<group-membership,Group membership>>, part of the <<group-protocol>> used for consumers and transactions.
+
+[[Heartbeat]]
+## `Heartbeat` (12)
+
+Part of <<consumer-group-protocol>>.
+
+[[LeaveGroup]]
+## `LeaveGroup` (13)
+
+Part of <<consumer-group-protocol>>.
+
+[[SyncGroup]]
+## `SyncGroup` (14)
+
+Part of <<consumer-group-protocol>>.
+
+[[DescribeGroups]]
+## `DescribeGroups` (15)
+
+[[ListGroups]]
+## `ListGroups` (16)
+
+[[SaslHandshake]]
+## `SaslHandshake` (17)
+
+[[ApiVersiond]]
+## `ApiVersions` (18)
+
+Sent from a client to a (bootstrap) broker to determine which version of other protocol messages should be used for communication. Note that through this client knows about individual RPC versions, but not the overall version of the broker (although it could be inferred).
+
+## `CreateTopics` (19)
+
+## `DeleteTopics` (20)
+
+## `DeleteRecords` (21)
+
+## `InitProducerId` (22)
+
+Part of <<transaction-protocol>>.
+
+## `OffsetForLeaderEpoch` (23)
+
+Part of <<transaction-protocol>>.
+
+## `AddPartitionsToTxn` (24)
+
+Part of <<transaction-protocol>>.
+
+## `AddOffsetsToTxn` (25)
+
+Part of <<transaction-protocol>>.
+
+## `EndTxn` (26)
+
+Part of <<transaction-protocol>>.
+
+## `WriteTxnMarkers` (27)
+
+Part of <<transaction-protocol>>.
+
+## `TxnOffsetCommit` (28)
+
+Part of <<transaction-protocol>>.
+
+## `DescribeAcls` (29)
+
+## `CreateAcls` (30)
+
+## `DeleteAcls` (31)
+
+## `DescribeConfigs` (32)
+
+## `AlterConfigs` (33)
+
+## `AlterReplicaLogDirs` (34)
+
+## `DescribeLogDirs` (35)
+
+## `SaslAuthenticate` (36)
+
+## `CreatePartitions` (37)
+
+## `CreateDelegationToken` (38)
+
+## `RenewDelegationToken` (39)
+
+## `ExpireDelegationToken` (40)
+
+## `DescribeDelegationToken` (41)
+
+## `DeleteGroups` (42)
+
+## `ElectLeaders` (43)
+
+## `IncrementalAterConfigs` (44)
+
+## `AlterPartitionReassignments` (45)
+
+## `ListPartitionReassignments` (46)
+
+## `OffsetDelete` (47)

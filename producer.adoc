@@ -1,0 +1,163 @@
+[id=producer]
+# Producer
+
+A producer sends messages to brokers.
+
+[id=producer-rpcs]
+## RPCs
+
+The producer starts by sending an <<ApiVersion>> request to discover the versions of each RPC supported by the broker.
+
+Once the producer knows the protocol API versions sends a <<Metadata>> request to one of the configured bootstrap brokers to discover the remaining brokers which make up the cluster. It will then connect to each of those brokers (possibly opening a 2nd connecion to the bootstrap broker).
+
+Finally it can start sending <<Produce>> requests.
+
+This is the simple scenario, absent any authentication. See <<authentication>>
+
+In continued operation the producer will periodically send further <<Metadata>> requests when the metadata times out or when it receives a response which implies that its metadata is stale (for example a `NOT_LEADER` error response to a <<Produce>> request for some partition).
+
+[id=producer-threads]
+## Threads
+
+The producer is thread safe and uses several threads of its own.
+
+The client calls the methods of the producer from some set of _user threads_.
+
+1. User call `producer.send()` (from a user thread)
+2. `ProducerRecord` is serialized and partitioned (on the same user thread)
++
+RecordAccumulator maintains a FIFO queue of batches for each partition.
+
+3. User thread will add the records for a given partition, and the callback from the `send()` , to the last batch, for the given partition (user thread).
++
+At this point the user thread is done and `send()` will return.
+
+4. Sender thread may pull a single batch from the head of (per-partition) queue. More precisely a batch will be sent when:
++
+* the batch is full (`batch.size` reached)
+* the batch is old enough (>= `linger.ms`)
+* there's another batch (for a different partition) to be sent to the same broker (this is sometimes known as "piggyback").
+* `flush()` or `close()` has been called
+
+5. Sender thread groups batches on the leader broker for their partition, to be sent in the same request.
+6. Sender thread sends the request and (eventually) gets the response and the callbacks for that batch are fired (in the same order that the records were added to the batch).
+
+
+[id=producer-tuning]
+## Tuning
+
+The following configuration parameters have the most effect on producers throughput and latency:
+
+* `linger.ms`
+* `batch.size`
+* `compression.type`
+* `acks`
+
+### `linger.ms`
+
+This is basically time-based batching. The producer will wait for upto `linger.ms` milliseconds before sending a batch, thus allowing more records to be added to the batch. This trades latency for throughput.
+
+### `batch.size`
+
+This is space-based batching. 
+
+### `compression.type`
+
+Compression is where the bulk of the time in the user thread is spent.
+
+The compression algorithm can make a lot of difference to performance.
+`gzip` is typically an order of magnitude slower than `snappy` or `lz4`, but offers worse compression ratio.
+
+Using multiple user threads can make up for the time spent in compression, but at the cost of changing message ordering within the batch.
+
+### `acks`
+
+TODO
+
+### `max.in.flight.requests.per.connection`
+
+`max.in.flight.requests.per.connection` can be set > 1 to make the producer
+pipeline the requests (that is, sending a another request before it has received the response from a former request). This can increase throughput, but breaks message ordering guarantees (because the former request may be found to have failed–necessitating a resend–after a subseqnet request–which succeeds–has been sent).
+
+Using too high a `max.in.flight.requests.per.connection` will result in a drop of throughput due to:
+
+* Lock contention
+* Worse batching
+
+
+### Finding bottlenecks
+
+Given the threading architecture of the producer and throughput bottleneck must be either:
+
+* In the user thread
+  -  try increasing the number of user threads
+* In the sender thread
+  - TODO
+* Or on the broker
+  - TODO
+
+
+### `kafka-producer-performance.sh`
+
+This tool is useful for optimizing the producer.
+
+* `Select_Rate_Avg` is the per-second rate that the sender thread calls `select` (that is, checks to see if it can send a request)
+* `Request_Rate_Avg` is the rate TODO
+* `Request_Latency_Avg` (time from send to receive, excluding callback execution time)
+* `Request_Size_Avg` (after compression)
+* `Batch_Size_Avg` (after compression)
+* `Records_Per_Request_Avg`
+* `Record_Queue_Time_Avg`
+* `Compression_Rate_Avg`
+
+### Formulas
+
+1. Throughput_Avg ≅ Request_Rate_Avg × Request_Size_Avg / Compression_Rate_Avg 
+
+2. Request_Size_Avg ≅ Records_Per_Request_Avg × Record_Size × Compression_Rate_Avg + Request_Overhead
+
+3. Request_Rate_Upper_limit ≅ (1000/ Request_Latency_Avg) * Num_Brokers
+
+4. Latency_Avg ≅ (Record_QueueTime_Avg / 2) + Request_Latency_Avg + Callback_Latency
+
+So when trying to increase throughput, (1) tells us we need to either increase the request rate or the request size, or decrease the compression rate.
+
+(3) allows us to compare a theoretical maximum for request rate with a measures value, If those are close then attention turns to the request size.
+
+We can do that by:
+
+* Having a bigger batch:
+    - using more user threads so each batch is fuller. Lock contention between the sender threads places a limit on how much this scales.
+    - increasing `linger.ms`. This doesn't always work because although it can improve the compression ratio, the extra time to do the compression is more than enough to make overall throughput worse.
+* increasing #partitions
+
+## Performance on the broker
+
+Assuming `acks=all` the time spent handling a producer request on the leader is the sum of:
+
+1. Network send time (producer to leader)
+2. Leader ProduceRequest queue time
+3. Time for the leader to append to its local log.
+4. Time while the leader is waiting for `min.in.sync.replicas` followers to append to their logs.
+5. Time in the ProduceResponse queue
+6. Network send time (leader to producer)
+
+(4) is the biggest overhead.
+
+
+1. Follower sends fetch request to leader
+2. Leader responds
+3. Follower appends to log
+4. Follower sends fetch request to leader.
+5. When the leader receives this fetch request that implies the follower has successfully appended the messages in in 3. So the per follower high water mark is incremented.
+
+The leader must do this for partition with a topic having `acks=all` in a ProduceRequest before it can send the ProduceResponse.
+
+
+Replication is not ProduceRequest aware. It takes multiple fetches.
+
+We can decrease the replication time by increasing `new.replica.fetchers` to fetch in parallel. The partitions are partitioned between the replica fetchers.
+
+`new.replica.fetchers` it the number fo fetcher for each (remote) broker, so the total number of fetcher threads in each brokers scales are the product of `new.replica.fetchers` and cluster size.
+
+https://www.youtube.com/watch?v=oQe7PpDDdzA

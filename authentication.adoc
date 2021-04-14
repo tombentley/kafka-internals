@@ -1,0 +1,34 @@
+[[authentication]]
+# Authentication
+
+[[scram-auth,SASL/SCRAM SHA authentication]]
+## SASL SCRAM Authentication
+
+### RPCs
+
+<<SaslHandshake>>
+
+[[plain-auth,SASL/PLAIN authentication]]
+## SASL Plain Authentication
+
+### RPCs
+
+[[oauth,SASL/OAUTHBEARER authentication]]
+## SASL Oauth bearer Authentication
+
+### RPCs
+
+[[kerberos,Kerberos authentication]]
+## Kerberos Authentication
+
+### RPCs
+
+[[tls-auth,TLS authentication]]
+# TLS Client Authentication
+
+
+* <<KIP-12>> added support for TLS and Kerberos
+* <<KIP-43>> added support for SASL Plain
+* <<KIP-84>> added support for SASL SCRAM-SHA
+* <<KIP-255>> added support for SASL/OAUTHBEARER
+* <<KIP-368>> added support for SASL connections to periodically re-authenticate

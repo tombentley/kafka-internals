@@ -1,0 +1,21 @@
+
+= References
+
+== KIPs
+
+- [[KIP-12,KIP-12]] 
+  https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=51809888[KIP-12] added support for TLS and Kerberos
+
+- [[KIP-43,KIP-43]] https://cwiki.apache.org/confluence/display/KAFKA/KIP-43%3A+Kafka+SASL+enhancements[KIP-43] added support for SASL Plain
+
+- [[KIP-62,KIP-62]] https://cwiki.apache.org/confluence/display/KAFKA/KIP-62%3A+Allow+consumer+to+send+heartbeats+from+a+background+thread[KIP-62] added a background thread for sending consumer heartbeats
+
+- [[KIP-84,KIP-84]] https://cwiki.apache.org/confluence/display/KAFKA/KIP-84%3A+Support+SASL+SCRAM+mechanisms[KIP-84] added support for SASL SCRAM-SHA
+
+- [[KIP-255,KIP-255]] https://cwiki.apache.org/confluence/pages/viewpage.action?pageId=75968876[KIP-255] added support for SASL/OAUTHBEARER
+
+- [[KIP-368,KIP-368]] https://cwiki.apache.org/confluence/display/KAFKA/KIP-368%3A+Allow+SASL+Connections+to+Periodically+Re-Authenticate[KIP-368] added support for SASL connecyions to periodically re-authenticate
+
+== Other
+
+- [[tuning-producer]]

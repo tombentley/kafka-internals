@@ -1,0 +1,44 @@
+# Kafka internals
+Tom Bentley
+:toc: left  
+
+:mermaid: ./node_modules/.bin/mmdc
+:phantomjs_19: ./node_modules/.bin/phantomjs
+
+:leveloffset: +1
+
+This document is about the implementation of Apache Kafka. It discusses both the code and the protocol in depth. 
+
+include::authentication.adoc[]
+
+// TODO include::authorization.adoc[]
+
+include::producer.adoc[]
+
+include::group-protocol.adoc[]
+
+include::consumer.adoc[]
+
+// TODO transactions
+
+// TODO include::admin-client.adoc[]
+
+include::metadata.adoc[]
+
+include::broker.adoc[]
+
+// TODO logs and segments
+
+// TODO include::controller.adoc[]
+
+// TODO partition reassignment
+
+// Kafka connect (and its embedded protocol)
+
+// Kafka Streams (and its embedded protocol)
+
+include::protocol.adoc[]
+
+
+
+include::bibliography.adoc[]

@@ -1,0 +1,37 @@
+[[consumer]]
+# Consumer
+
+The consumer can run:
+
+* standalone, or
+* as part of a "consumer group"
+
+Running as part of a consumer group is as simple as setting the `group.id` configuration parameter. When run in a consumer group the client instance will use the <<group-protocol>> to distribute the work of consuming from multiple partitions between the members of the group. In other words, the group leader will assign each partition which the consumers want to read to a single member of the group. This guarantees that each record is only read once (modulo records read by some consumer but not committed).
+
+**partition fairness in fetch requests**
+This is rather complicated and differs between followers and client consumers. The consumer essentially uses a queue of partitions, so that when a fetch response contains some records for a given partition that partition is moved to the back of the queue, thus ensuring that all partitions can make progress, though taking a number of fetch requests to do so.
+
+See `PartitionStates.moveToEnd` and `PartitionStates.updateAndMoveToEnd()`.
+
+
+## Standalone
+
+### RPCs
+
+### Threads
+
+## Consumer group
+
+### RPCs
+
+### Threads
+
+## Tuning
+
+* Message size
+* `fetch.max.bytes`
+* `max.parttiion.fetch.bytes`
+* GC causing rebalances (is this really a thing?)
+* `session.timeout.ms` (and others)
+
+https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Client-side+Assignment+Proposal

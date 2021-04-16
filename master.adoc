@@ -1,13 +1,105 @@
+// asciidoctor -r asciidoctor-diagram master .adoc
+
 # Kafka internals
 Tom Bentley
 :toc: left  
 
-:mermaid: ./node_modules/.bin/mmdc
-:phantomjs_19: ./node_modules/.bin/phantomjs
-
 :leveloffset: +1
 
 This document is about the implementation of Apache Kafka. It discusses both the code and the protocol in depth. 
+
+.The Replica State Machine
+[smcat]
+....
+NewReplica,
+OnlineReplica,
+OfflineReplica,
+ReplicaDeletionStated,
+ReplicaDeletionSuccessful,
+ReplicaDeletionIneligible,
+NonexistentReplica;
+
+NewReplica                => OnlineReplica             : "in assigned replicas";
+NewReplica                => OfflineReplica            : "hosting broker dies";
+OnlineReplica             => OfflineReplica            : "hosting broker dies";
+OnlineReplica             => OnlineReplica             ;
+OfflineReplica            => OnlineReplica             ;
+OfflineReplica            => OfflineReplica            ;
+OfflineReplica            => ReplicaDeletionStated     : "deletion started";
+ReplicaDeletionStated     => ReplicaDeletionSuccessful : "no error";
+ReplicaDeletionStated     => ReplicaDeletionIneligible : "error";
+OfflineReplica            => ReplicaDeletionIneligible ;
+ReplicaDeletionIneligible => OnlineReplica             ;
+ReplicaDeletionIneligible => OfflineReplica            : "hosting broker dies";
+ReplicaDeletionSuccessful => NonexistentReplica        : "deleted";
+NonexistentReplica        => NewReplica                : "created";
+....
+
+.The Partition State Machine
+[smcat]
+....
+initial,
+ NonExistentPartition,
+ NewPartition,
+ OnlinePartition,
+ OfflinePartition;
+
+initial              => NonExistentPartition;
+OfflinePartition     => NonExistentPartition : "deleted";
+NonExistentPartition => NewPartition         : "created";
+NewPartition         => OnlinePartition      : "leader elected";
+OfflinePartition     => OnlinePartition      : "new leader elected";
+NewPartition         => OfflinePartition;
+OnlinePartition      => OfflinePartition     : "leader dies";
+
+....
+
+// Vague structure
+//
+// Part 1: Protocol
+//   The participants (client, broker, producer, consumer, follower, leader, controller, zk)
+//   Client bootstrapping & Authentication (API_VERSIONS, METADATA, SASL*)
+//   The producer protocol (PRODUCE)
+//   Group protocol (FIND_COORDINATOR, JOIN_GROUP, SYNC_GROUP, LEAVE_GROUP, HEARTBEAT)
+//   Transactional produce (producer/broker txn protocol) (BEGIN_TXN, ADD_PARTITION_TO_TXN, END_TXN, etc)
+//   Consumer Fetch (including incremental fetch) (consumer FETCH, OFFSET_COMMIT)
+//   Broker metadata (LEADER_AND_ISR, UPDATE_METADATA, METADATA_FETCH)
+//   Replication protocol (follower FETCH)
+//   Reassignment
+//   KRaft
+//   Admin things (LIST and DESCRIBE, DELETE_RECORDS, CREATE_/DELETE_TOPICS)
+//
+// Part 2: Implementation
+//   Producer
+//     Serialization, partitioning and batching
+//     Accumulator
+//     Sender
+//     TxnManager
+//
+//   Consumer
+//
+//   Logs and segments
+//
+//   Broker
+//     TxnCoordinator
+//     GroupCoordinator
+//     ReplicaManager
+//     RSM
+//     PSM
+//
+//   Controller
+//
+//   Kafka Connect
+//
+//   Kafka Streams
+//
+// Part 3: Operations
+//
+// Appendices
+//   KIP index
+//   RPC index
+
+
 
 include::authentication.adoc[]
 

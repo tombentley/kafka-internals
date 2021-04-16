@@ -1,0 +1,4 @@
+master.html
+diag-*.svg
+.asciidoctor/
+Gemfile.lock

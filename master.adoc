@@ -3,10 +3,298 @@
 # Kafka internals
 Tom Bentley
 :toc: left  
+:source-highlighter: pygments
 
 :leveloffset: +1
 
-This document is about the implementation of Apache Kafka. It discusses both the code and the protocol in depth. 
+This document is about the _implementation_ of Apache Kafka.
+It does not address why you might want to use Kafka, or how to do anything in particular with it.
+Instead it discusses both the protocol and the code in depth. 
+It is largely aimed as answering the question "How does Kafka work?".
+It assumes you have some familiarity with Kafka concepts such as topics, partitions, replicas, logs and segments.
+
+The content is broken into three parts. 
+First the Kafka protocol is introduced, mostly without talking about implementation details.
+Second we talk about the implementation of the Apache Kafka clients, broker and other things.
+Finally we try to put this theoretical knowledge to use by talking about how it relates to real problems.
+
+
+# The Kafka Protocol
+
+In this part we cover most of the Kafka protocol in the abstract.
+We're not concerned here with how messages get serialized, networking, threading or any other implementation concerns.
+This is purely about what information flows between which peers, and what they might do with it.
+
+## APIs
+
+Kafka's is almost uniformly a request-response protocol that runs on TCP or TLS transports. 
+Request and responses are sometimes collectively called "messages", or RPCs (remote procedure calls). "Messages" is a little confusing since records are also often called "messages", so we'll use the term RPC instead.
+
+Each request includes a number, called the API key, which identifies the type of request. For example, the produce request, used to send records to a broker, has API key 0, and the fetch request has the API key 1.
+
+RPCs consist of a header and a body. For requests the header looks like this:
+
+[id=RequestHeader]
+[source,javascript]
+.The request header
+----
+include::kafka-sources/clients/src/main/resources/common/message/RequestHeader.json[lines=16..-1]
+----
+
+We'll discuss the `RequestApiVersion` shortly. 
+The `CorrelationId` allows brokers to respond to requests in a different order than the client sent them in: 
+The client uses a unique id for each request, which is included in the response, and the client matches the response to the request using the id.
+
+Responses have their own header:
+
+[id=ResponseHeader]
+[source,javascript]
+.The response header
+----
+include::kafka-sources/clients/src/main/resources/common/message/ResponseHeader.json[lines=16..-1]
+----
+
+// TODO define API key
+// TODO request response (almost always)
+// TODO request header
+// TODO response header
+
+## Participants
+// define client, broker, producer, consumer, follower, leader, controller, zk
+
+Let's define the participants in the Kafka protocol.
+
+### Clients
+
+The applications which talk to a cluster from the outside are _clients_. These include _producers_, which send messages to the cluster to be appended to logs, and _consumers_ which read from those logs. It also includes things like the _admin_ client, which is used to manage the cluster. Although Apache Kafka packages its clients as three separate classes this distinction is not meaningful at the protocol level. What defines a client is its use of the client-facing APIs (often referred to as RPCs).
+
+
+
+### Brokers
+
+Clients usually talk to _brokers_, which are network server processes with the main purpose of storing logs. When talking about a broker in relation to a particular partition it may be acting in the _leader_ or _follower_ role. In other words, a _leader_ or _follower_ is a broker acting in a certain role with respect to a given partition.
+
+### Controller
+
+The _controller_ is a network server process with the task of coordinating the metadata necessary for the operation of the cluster. 
+In ZK-mode the controller is broker which takes on the controller role (for a time).
+In Kraft mode the controller is _usually_ one of a separate set of network servers making up the raft cluster, though the raft cluster may instead be made up of a subset of the brokers in smaller, typically non-production, deployments.
+
+### Kraft nodes
+
+### ZooKeeper nodes
+
+### Servers
+
+This document will use the term "server" to collectively refer to something that could be a broker, a kraft node or possibly a zookeeper node and a more specific term would be incorrect. For example, both brokers and kraft nodes support the METADATA RPC, so "server" would be the appropriate term for the recipient of a metadata request.
+
+## Client bootstrapping
+// API_VERSIONS, SASL*, METADATA
+
+When a client starts up it has no existing knowledge of the cluster state, it only has a set of "bootstrap servers".
+Bootstrapping is the process of connecting to one of those servers and discovering the necessary cluster state in order to perform whatever that client is supposed to do.
+
+In order to do this it needs:
+
+1. To know how to talk to the broker is connects to. 
+The Kafka RPCs are individually versioned, so in order to send a request that the server will understand the client needs to know the versions supported by the server. This is the purpose of the `API_VERSIONS` request. 
+
+2. Possibly to authenticate to the server. The `API_VERSIONS` request is the only one which a server requiring authentication will handle without requiring authentication of its peer. Kafka supports multiple authentication schemes. If TLS is used for authentication then the server will already know the client's identity as a result of the TLS handshake. If SASL is being used then `SASL_HANDSHAKE` and `SASL_AUTHENTICATE` are exchanged.
+
+3. To discover information about the cluster, such as the other brokers which are currently in it and information about certain topics of interest to the client. This is done using `METADATA` requests.
+
+The process described above is common to all clients.
+
+
+
+### API versions
+
+#### `ApiVersionsRequest`
+
+The API_VERSIONS request is trivial, having only a couple of optional fields for telling the server the name and version of the client library.
+// TODO for each request: required authz, idempotency
+[id=ApiVersionsRequest]
+[source,javascript]
+.The API_VERSIONS request
+----
+include::kafka-sources/clients/src/main/resources/common/message/ApiVersionsRequest.json[lines=16..-1]
+----
+
+#### `ApiVersionsResponse`
+
+The response is essentially composed of a object for each API/RPC key, containing the maximum and minimum version supported by the broker. 
+KIP-XXX added support for clients to discover the server's supported and enabled features.
+Features can only be enabled when all servers in a cluster support them.
+Hence the availability features for use is a cluster-wide concern, rather than something that is per-broker.
+[id=ApiVersionsResponse]
+[source,javascript]
+.The API_VERSIONS response
+----
+include::kafka-sources/clients/src/main/resources/common/message/ApiVersionsResponse.json[lines=16..-1]
+----
+
+NOTE:: The API versions response does not include a server software version, e.g. that a broker is running Kafka 3.0. 
+This is intentional as it discourages clients from becoming dependent on the broker version (e.g. using it to work around bugs).
+The rationale is that it's better that the broker be fixed by of software update than for clients implement version-specific behaviour.
+Of course this does not prevent the set of RPCs and their maximum and minimum versions being used to infer the broker version.
+
+// Feature gates
+
+### SASL authentication
+
+// Example using SASL plain
+
+// Example using SASL SCRAM-SHA
+
+// Example using OAUTH_BEARER
+
+### Metadata requests
+
+// The initial cluster request
+
+// Topic requests
+
+// Topic creation by side-effect
+
+// authorized operations
+
+// Refreshing metadata
+
+## Produce
+
+// PRODUCE
+
+## Group protocol
+
+// FIND_COORDINATOR, JOIN_GROUP, SYNC_GROUP, LEAVE_GROUP, HEARTBEAT
+
+## Transactional produce
+
+// (producer/broker txn protocol) (BEGIN_TXN, ADD_PARTITION_TO_TXN, END_TXN, etc)
+
+## Consumer Fetch
+
+// (including incremental fetch) (consumer FETCH, OFFSET_COMMIT, OFFSET_FETCH)
+
+## Broker metadata
+
+// LEADER_AND_ISR, UPDATE_METADATA, METADATA_FETCH
+
+## Replication protocol
+
+// FETCH
+
+## Reassignment
+
+## Kraft
+
+## Admin requests
+
+// LIST_GROUPS, DESCRIBE_GROUPS
+// *_ACLS
+// CREATE_/DELETE_TOPICS, CREATE_PARTITIONS
+// DELETE_RECORDS
+// Other DESCRIBE_*
+// KIP-700 DESCRIBE_CLUSTER
+
+# Implementation
+
+//
+// Part 2: Implementation
+## Producer
+### Serialization, partitioning and batching
+### Accumulator
+### Sender
+### TxnManager
+
+.The `TransactionManager` State Machine
+[smcat]
+....
+"Uninit",
+Initializing,
+Ready,
+InTransaction,
+CommittingTxn,
+AbortingTxn,
+AbortableError,
+FatalError;
+
+Ready => "Uninit";
+"Uninit" => Initializing;
+AbortingTxn => Initializing;
+Initializing => Ready;
+CommittingTxn => Ready;
+AbortingTxn => Ready;
+Ready => InTransaction;
+InTransaction => CommittingTxn;
+InTransaction => AbortingTxn;
+AbortableError => AbortingTxn;
+InTransaction => AbortableError;
+CommittingTxn => AbortableError;
+AbortableError => AbortableError;
+"Uninit" => FatalError;
+Initializing => FatalError;
+Ready => FatalError;
+InTransaction => FatalError;
+CommittingTxn => FatalError;
+AbortingTxn => FatalError;
+AbortableError => FatalError;
+....
+
+//
+## Consumer
+### Fetcher
+### `AbstractCoordinator`
+
+.The group `MemberState` state Machine
+[smcat]
+....
+Unjoined,
+PreparingRebalance,
+CompletingRebalance,
+Stable;
+
+Unjoined => PreparingRebalance  : "sent JoinGroup request, but no response yet" ;
+PreparingRebalance => CompletingRebalance : "received JoinGroup response, but no assignment yet" ;
+CompletingRebalance => Stable : "Joined; sending heartbeats" ;
+....
+
+//
+## Broker
+### Startup
+### Shutdown
+#### Controller shutdown
+#### Full disks
+#### Crash
+### ReplicaManager
+### RSM
+### GroupCoordinator
+
+.The group `GroupState` state Machine
+[smcat]
+....
+PreparingRebalance,
+CompletingRebalance,
+Stable,
+Dead,
+Empty;
+
+Stable => PreparingRebalance : "multiple reasons";
+CompletingRebalance => PreparingRebalance : "leave group from existing member, or member failure detected";
+Empty => PreparingRebalance;
+
+PreparingRebalance => CompletingRebalance : "members joined in time";
+CompletingRebalance => Stable : "sync group with assignment received";
+
+Stable => Dead : "emigration";
+PreparingRebalance => Dead : "emigration";
+CompletingRebalance => Dead : "emigration";
+Empty => Dead : "offxet expiration";
+Dead => Dead;
+
+PreparingRebalance => Empty : "all members left";
+....
+
 
 .The Replica State Machine
 [smcat]
@@ -35,6 +323,8 @@ ReplicaDeletionSuccessful => NonexistentReplica        : "deleted";
 NonexistentReplica        => NewReplica                : "created";
 ....
 
+### PSM
+
 .The Partition State Machine
 [smcat]
 ....
@@ -51,53 +341,24 @@ NewPartition         => OnlinePartition      : "leader elected";
 OfflinePartition     => OnlinePartition      : "new leader elected";
 NewPartition         => OfflinePartition;
 OnlinePartition      => OfflinePartition     : "leader dies";
-
 ....
 
-// Vague structure
+### Logs and segments
+### TxnCoordinator
+### GroupCoordinator
 //
-// Part 1: Protocol
-//   The participants (client, broker, producer, consumer, follower, leader, controller, zk)
-//   Client bootstrapping & Authentication (API_VERSIONS, METADATA, SASL*)
-//   The producer protocol (PRODUCE)
-//   Group protocol (FIND_COORDINATOR, JOIN_GROUP, SYNC_GROUP, LEAVE_GROUP, HEARTBEAT)
-//   Transactional produce (producer/broker txn protocol) (BEGIN_TXN, ADD_PARTITION_TO_TXN, END_TXN, etc)
-//   Consumer Fetch (including incremental fetch) (consumer FETCH, OFFSET_COMMIT)
-//   Broker metadata (LEADER_AND_ISR, UPDATE_METADATA, METADATA_FETCH)
-//   Replication protocol (follower FETCH)
-//   Reassignment
-//   KRaft
-//   Admin things (LIST and DESCRIBE, DELETE_RECORDS, CREATE_/DELETE_TOPICS)
+##  Controller
 //
-// Part 2: Implementation
-//   Producer
-//     Serialization, partitioning and batching
-//     Accumulator
-//     Sender
-//     TxnManager
+## Kafka Connect
 //
-//   Consumer
-//
-//   Logs and segments
-//
-//   Broker
-//     TxnCoordinator
-//     GroupCoordinator
-//     ReplicaManager
-//     RSM
-//     PSM
-//
-//   Controller
-//
-//   Kafka Connect
-//
-//   Kafka Streams
+## Kafka Streams
 //
 // Part 3: Operations
 //
 // Appendices
 //   KIP index
 //   RPC index
+//   Index of message schemas (both public and internal)
 
 
 

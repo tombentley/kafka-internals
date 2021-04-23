@@ -19,8 +19,3 @@ RUN apk --no-cache add python3
 RUN apk --update --no-cache add nodejs nodejs-npm
 RUN npm install --global state-machine-cat 
 
-# Copy the doc from the host
-COPY *.adoc .
-# TODO install smcat
-#RUN asciidoctor -D tmp master.adoc && chmod -R o+rwx tmp
-

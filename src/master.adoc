@@ -43,7 +43,7 @@ For requests the header looks like this:
 [source,javascript]
 .The request header
 ----
-include::kafka-sources/clients/src/main/resources/common/message/RequestHeader.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/RequestHeader.json[lines=16..-1]
 ----
 
 We'll discuss the `RequestApiVersion` shortly. 
@@ -57,7 +57,7 @@ Responses have their own header:
 [source,javascript]
 .The response header
 ----
-include::kafka-sources/clients/src/main/resources/common/message/ResponseHeader.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/ResponseHeader.json[lines=16..-1]
 ----
 
 // TODO define API key
@@ -129,7 +129,7 @@ The API_VERSIONS request is trivial, having only a couple of optional fields for
 [source,javascript]
 .The API_VERSIONS request
 ----
-include::kafka-sources/clients/src/main/resources/common/message/ApiVersionsRequest.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/ApiVersionsRequest.json[lines=16..-1]
 ----
 
 #### `ApiVersionsResponse`
@@ -139,7 +139,7 @@ The response is essentially composed of a object for each API/RPC key, containin
 [source,javascript]
 .The API_VERSIONS response
 ----
-include::kafka-sources/clients/src/main/resources/common/message/ApiVersionsResponse.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/ApiVersionsResponse.json[lines=16..-1]
 ----
 
 // client doesn't know broker version
@@ -186,7 +186,7 @@ This is done using a `PRODUCE` request which essentially contains the messages t
 [source,javascript]
 .The `PRODUCE` request
 ----
-include::kafka-sources/clients/src/main/resources/common/message/ProduceRequest.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/ProduceRequest.json[lines=16..-1]
 ----
 
 #### `ProduceResponse`
@@ -200,7 +200,7 @@ That is, `acks=0` doesn't just mean the producer doesn't _wait_ for an acknowled
 [source,javascript]
 .The `PRODUCE` response
 ----
-include::kafka-sources/clients/src/main/resources/common/message/ProduceResponse.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/ProduceResponse.json[lines=16..-1]
 ----
 
 Of course there's the possibility that the broker is not the leader for some of the partitions in the request.
@@ -263,7 +263,7 @@ They have to manage extra broker-side state for the subjects they're coordinatin
 [source,javascript]
 .The `FIND_COORDINATOR` request
 ----
-include::kafka-sources/clients/src/main/resources/common/message/FindCoordinatorRequest.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/FindCoordinatorRequest.json[lines=16..-1]
 ----
 
 #### `FindCoordinatorResponse`
@@ -272,7 +272,7 @@ include::kafka-sources/clients/src/main/resources/common/message/FindCoordinator
 [source,javascript]
 .The `FIND_COORDINATOR` response
 ----
-include::kafka-sources/clients/src/main/resources/common/message/FindCoordinatorResponse.json[lines=16..-1]
+include::../kafka-sources/clients/src/main/resources/common/message/FindCoordinatorResponse.json[lines=16..-1]
 ----
 
 ### Obtaining a Producer Id (PID)
@@ -290,8 +290,6 @@ include::kafka-sources/clients/src/main/resources/common/message/FindCoordinator
 // (including incremental fetch) (consumer FETCH, OFFSET_COMMIT, OFFSET_FETCH)
 
 ## Group protocol
-
-
 
 // FIND_COORDINATOR, JOIN_GROUP, SYNC_GROUP, LEAVE_GROUP, HEARTBEAT
 Kafka has a separate group _membership_ protocol and group _state_ protocol.

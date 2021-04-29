@@ -5,6 +5,7 @@ Tom Bentley
 :toc: left  
 :toclevels: 4
 :source-highlighter: pygments
+:icons: font
 
 
 :leveloffset: +1
@@ -30,8 +31,9 @@ This is purely about what information flows between which peers, and what they m
 ## APIs
 
 Kafka's is almost uniformly a request-response protocol that runs on TCP or TLS transports. 
-Request and responses are sometimes collectively called "messages", or RPCs (remote procedure calls). "Messages" is a little confusing since records are also often called "messages", so we'll use the term RPC instead.
+Requests and responses are sometimes collectively called "messages", or RPCs (remote procedure calls). "Messages" is a little confusing since records are also often called "messages", so we'll use the term RPC instead.
 
+// define API key
 Each request includes a number, called the API key, which identifies the type of request. For example, the produce request, used to send records to a broker, has API key 0, and the fetch request has the API key 1.
 
 RPCs consist of a header and a body. 
@@ -51,7 +53,7 @@ The `CorrelationId` allows brokers to respond to requests in a different order t
 The client uses a unique id for each request, which is included in the response, and the client matches the response to the request using the id.
 
 ### Response header
-Responses have their own header:
+Responses have their own header, which just includes the correlation id.
 
 [id=ResponseHeader]
 [source,javascript]
@@ -60,10 +62,13 @@ Responses have their own header:
 include::../kafka-sources/clients/src/main/resources/common/message/ResponseHeader.json[lines=16..-1]
 ----
 
-// TODO define API key
-// TODO request response (almost always)
-// TODO request header
-// TODO response header
+Although it's not part of the response header, must responses have a top-level field in the body called `ThrottleTimeMs`, which we'll discuss here.
+Brokers need to be able to throttle clients but they can't control how quickly clients send requests.
+Therefore the only mechanism the broker can use to throttle clients is to not return a response immediately when the client's quota is exceeded.
+This would be completely transparent to the client, so the `ThrottleTimeMs` field is used to inform the client that the response was delayed for the given amount of time.
+A sufficiently sophisticated client could use this to slow the rate it sends RPCs to that broker.
+This would make most sense for those requests which can be sent to any broker.
+
 
 ## Participants
 // define client, broker, producer, consumer, follower, leader, controller, zk
@@ -72,17 +77,22 @@ Let's define the participants in the Kafka protocol.
 
 ### Clients
 
-The applications which talk to a cluster from the outside are _clients_. These include _producers_, which send messages to the cluster to be appended to logs, and _consumers_ which read from those logs. It also includes things like the _admin_ client, which is used to manage the cluster. Although Apache Kafka packages its clients as three separate classes this distinction is not meaningful at the protocol level. What defines a client is its use of the client-facing APIs (often referred to as RPCs).
+The applications which talk to a cluster from the outside are _clients_. These include _producers_, which send messages to the cluster to be appended to logs, and _consumers_ which read from those logs.
+It also includes things like the _admin_ client, which is used to manage the cluster.
+Although Apache Kafka packages its clients as three separate classes this distinction is not meaningful at the protocol level. 
+What defines a client is its use of the client-facing APIs.
 
 ### Brokers
 
-Clients usually talk to _brokers_, which are network server processes with the main purpose of storing logs. When talking about a broker in relation to a particular partition it may be acting in the _leader_ or _follower_ role. In other words, a _leader_ or _follower_ is a broker acting in a certain role with respect to a given partition.
+Clients usually talk to _brokers_, which are network server processes with the main purpose of storing logs. 
+When talking about a broker in relation to a particular partition it may be acting in the _leader_ or _follower_ role. In other words, a _leader_ or _follower_ is a broker acting in a certain role with respect to a given partition.
 
 ### Controller
 
 The _controller_ is a network server process with the task of coordinating the metadata necessary for the operation of the cluster. 
-In ZK-mode the controller is broker which takes on the controller role (for a time).
-In Kraft mode the controller is _usually_ one of a separate set of network servers making up the raft cluster, though the raft cluster may instead be made up of a subset of the brokers in smaller, typically non-production, deployments.
+In ZK-mode the controller is a broker which takes on the controller role (for a time).
+In KRaft mode the controller is _usually_ one of a separate set of network servers making up the raft cluster. 
+In non-production deployments the raft cluster may instead be made up of a subset of the brokers.
 
 ### Kraft nodes
 
@@ -90,19 +100,21 @@ In Kraft mode the controller is _usually_ one of a separate set of network serve
 
 ### Servers
 
-This document will use the term "server" to collectively refer to something that could be a broker, a kraft node or possibly a zookeeper node and a more specific term would be incorrect. For example, both brokers and kraft nodes support the METADATA RPC, so "server" would be the appropriate term for the recipient of a metadata request.
+This document will use the term "server" to collectively refer to something that could be a broker, a KRaft node or possibly a zookeeper node and a more specific term would be incorrect.
+For example, both brokers and kraft nodes support the METADATA RPC, so "server" would be the appropriate term for the recipient of a metadata request.
 
 ## Client bootstrapping
 // API_VERSIONS, SASL*, METADATA
 
 When a client starts up it has no existing knowledge of the cluster state, it only has the set of "bootstrap servers" with which it has been configured.
-Bootstrapping is the process of connecting to one of those servers and discovering the necessary cluster state in order to perform whatever that client is supposed to do. The necessary cluster state includes the available brokers and their addresses and possibly information about topics of interest.
+Bootstrapping is the process of connecting to one of those servers and discovering the necessary cluster state in order to perform whatever that client is supposed to do. 
+The necessary cluster state includes the available brokers and their addresses and possibly information about topics of interest.
 
 In order to do this it needs:
 
 1. To know how to talk to the bootstrap broker it connects to. 
-The Kafka RPCs are individually versioned, so in order to send requests that the server will understand the Apache Kafka clients need to know the versions supported by the server.
-This the `API_VERSIONS` request allows a client to discover this.
+The Kafka RPCs are individually versioned, so in order to send requests that the server will understand, the Apache Kafka clients need to know the versions supported by the server.
+The `API_VERSIONS` request allows a client to discover this.
 By sending a `API_VERSIONS` request first, a client can determine which versions of all the other RPCs it should use by taking `max(intersection(supported_client_versions, supported_broker_versions))` for that particular API.
 
 2. Possibly to authenticate to the server. The `API_VERSIONS` request is the only one which a listener requiring authentication will handle without requiring authentication of its peer. 
@@ -115,7 +127,7 @@ One response with the information about the live brokers is enough to bootstrap 
 
 The process described above is common to all _Apache_ Kafka clients.
 Other client libraries sometimes work slightly differently.
-For example, a Sarama client has to be configured with the version of the broker it is talking to and uses a hard-coded with the mapping from "broker version" to supported API versions. 
+For example, a Sarama client has to be configured with the version of the broker it is talking to and uses a hard-coded mapping from "broker version" to supported API versions. 
 
 In the following sections we'll explore these requests in detail.
 
@@ -153,25 +165,164 @@ KIP-584 added support for 'feature gates', which is a mechanism for versioning f
 The supported and enabled features are also included.
 Features are only supported when all servers in a cluster support them, and are enabled by an administrator.
 
-### SASL authentication
+### SASL authentication (`SASL_HANDSHAKE` and `SASL_AUTHENTICATE`)
 
-// Example using SASL plain
+KIP-12 added support for SASL/GSSAPI (aka Kerberos v5) and SSL/TLS. These are both negotiated in the transport layer, and so there's no need for application-level APIs for them.
 
-// Example using SASL SCRAM-SHA
+#### `SaslHandshakeRequest` 
 
-// Example using OAUTH_BEARER
+The request nominates a SASL mechanism
+
+[id=SaslHandshakeRequest]
+[source,javascript]
+.The `SASL_HANDSHAKE` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/SaslHandshakeRequest.json[lines=16..-1]
+----
+
+#### `SaslHandshakeResponse` 
+
+The response either rejects the request (`UNSUPPORTED_SASL_MECHANISM`) with a list of the supported mechanisms, or agrees to the selected mechanism.
+
+[id=SaslHandshakeResponse]
+[source,javascript]
+.The `SASL_HANDSHAKE` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/SaslHandshakeResponse.json[lines=16..-1]
+----
+
+What happens next depends on the support broker and client versions.
+
+For `SASL_HANDSHAKE` version 0 (defined in KIP-43), on receipt of the response the client stops sending normal Kafka-framed RPCs and starts a SASL exchange over the connection, serialized as a simple Kafka array without any message header.
+Once this exchange has completed (and resulted in success) Kafka RPCs can again be sent.
+
+[source]
+.Example v0 SASL/Plain conversation (adapted from RFC-4616) showing framing/encapsulation
+----
+C(Kafka): SaslHandShake(mechanism=plain)  <1>
+S(Kafka): SaslHandshake(error=0)          <2>
+C(SASL): <NUL>tim<NUL>tanstaaftanstaaf    <3>
+S(SASL): // return an empty SASL frame    <4>
+... further Kafka frames
+----
+<1> I want to use Plain
+<2> OK, use plain
+<3> I'm tim, my password is tanstaaftanstaaf
+<4> I agree, you are
+
+While this works for SASL/Plain there is no mechanism-independent way for a server to tell a client the exchange has failed.
+This makes it hard for clients to handle failed exchanges.
+
+#### `SaslAuthenticateRequest` 
+
+For version `SASL_HANDSHAKE` 1+ (defined by KIP-152) the SASL exchange is wrapped in Kafka-level `SASL_AUTHENTICATE` requests and responses
+
+[source]
+.Example v1 SASL/Plain conversation (adapted from RFC-4616) showing Kafka framing
+----
+C(Kafka): SaslHandshake(mechanism=plain)
+S(Kafka): SaslHandshake(error=0)
+C(Kafka): SaslAuthenticate(sasl_auth_bytes=<NUL>tim<NUL>tanstaaftanstaaf) <1>
+S(Kafka): SaslAuthenticate(error_code=0, sasl_auth_bytes=) // empty       <2>
+... further Kafka frames
+----
+<1> Encapsulated in a Kafka request
+<2> Encapsulated in a Kafka response
+
+[id=SaslAuthenticateRequest]
+[source,javascript]
+.The `SASL_AUTHENTICATE` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/SaslAuthenticateRequest.json[lines=16..-1]
+----
+
+#### `SaslAuthenticateResponse` 
+
+[id=SaslAuthenticateResponse]
+[source,javascript]
+.The `SASL_AUTHENTICATE` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/SaslAuthenticateResponse.json[lines=16..-1]
+----
+
+Support for SASL/SCRAM (KIP-84) and SASL/OAUTHBEARER (KIP-255) works in the same way, though SCRAM requires multiple `SASL_AUTHENTICATE` exchanges.
+
+
+// TODO example logging of successful and failed SASL authentication
 
 ### Metadata requests
 
 // The initial cluster request
+The minimum information needed to bootstrap a client is the set of live brokers and how they can be connected to.
+The client obtains this using a `METADATA` request to a bootstrap broker (having first found out its supported API versions and authenticated to it).
+
+#### `MetadataRequest`
+
+[id=MetadataRequest]
+[source,javascript]
+.The `METADATA` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/MetadataRequest.json[lines=16..-1]
+----
+
+// TODO example log for a bootstrap metadata request (explain the negative broker ids)
 
 // Topic requests
-
+Information about some (possibly empty) set of topics can be requested at the same time. 
 // Topic creation by side-effect
-
+The possibility of creating topics as a side-effect means that metadata requests are not idempotent, and is not good protocol design.
+Support for this was added before the Admin client was a viable alternative for creating topics explicitly.
 // authorized operations
+Support for obtaining information about what the authenticated principal can do was also an ad-doc addition to the API to support the Admin client. 
 
 // Refreshing metadata
+The Apache Kafka clients have a cache of the metadata and will refresh it when:
+
+* they observe a response which an error code which implies that the metadata is out of date
+* periodically, if it's not otherwise been refreshed
+
+The producer and consumer metadata handling is entirely managed in this way and hence is hidden from the user. 
+In the admin client, the user visible methods such as `describeCluster()`, `listTopics()` and `describeTopics()` will always send a metadata request, rather than serving possibly stale data from the cache. 
+The cache itself is not updated by these explicit requests either: The two paths for metadata requests are completely independent. 
+
+#### `MetadataResponse`
+
+[id=MetadataResponse]
+[source,javascript]
+.The `METADATA` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/MetadataResponse.json[lines=16..-1]
+----
+
+The cluster is described by the _live_ brokers in the `Brokers` array.
+No information about non-live brokers is included, even though their existence may be inferred from other parts of the response (e.g. `Topics/Partitions/ReplicaNodes`.
+
+When a partition doesn't have a leader its `LeaderId` will be -1.
+
+// TODO example logging for a the bootstrap metadata response
+
+// TODO Metadata in the admin client (CLUSTER_METADATA)
+
+### Summary
+
+A "typical" client bootstrapping exchange looks like this:
+[source]
+.Typical successful client bootstrapping
+----
+C: ApiVersions v3
+S: ApiVersions v3 (ErrorCode=0,
+                   ApiKeys=[{ApiKey=SaslHandshake, Min=0, Max=1},
+                            {ApiKey=SaslAuthenticate, Min=0, Max=2},
+                            {ApiKey=Metadata, Min=0, Max=11}, ...])
+C: SaslHandshake v1 (Mechanism=plain)
+S: SaslHandshake v1 (ErrorCode=0)
+C: SaslAuthenticate v2 (sasl_auth_bytes=<NUL>tim<NUL>tanstaaftanstaaf)
+S: SaslAuthenticate v2 (ErrorCode=0, sasl_auth_bytes=) // empty
+C: Metadata v11 ()
+S: Metadata v11 (ErrorCode=0, Brokers=...)
+----
+
+And whenever a client is disconnected from a broker we'd expect to see the same pattern, minus the metadata request/response.
 
 ## The simple Producer
 
@@ -190,8 +341,6 @@ The fields in the produce request should be fairly self-explanatory.
 ----
 include::../kafka-sources/clients/src/main/resources/common/message/ProduceRequest.json[lines=16..-1]
 ----
-
-
 
 #### `ProduceResponse`
 
@@ -260,7 +409,7 @@ This allows a producer to send messages to a set of partitions (with leaders on 
 
 Because logs are immutable and records get appended during the transaction it is necessary for transactional consumers (i.e. those with an isolation level of `read_committed`) to buffer incomplete transactions in memory. Special control records are present in the log to mark the end of a transaction. If the marker shows the transaction was aborted the buffered records are silently dropped and not passed on to the application.
 
-To enable this the producer uses a number of additional requests.
+To enable this, the producer uses a number of additional requests.
 
 1. It must find the broker which is acting as its transaction coordinator.
 
@@ -292,7 +441,7 @@ partitionId = abs(hashCode(identity)) mod numPartitions(topicName)
 coordinator = leaderOf(topicName, partitionId)
 ----
 +
-Where the `topicName` is `__consumer_offsets` for the consumer group coordinator and `__transaction_state` for the transaction coordinator. 
+Where the `topicName` is `\__consumer_offsets` for the consumer group coordinator and `__transaction_state` for the transaction coordinator. 
 In other words, the leaders of partitions of those topics have an additional role on top of their leadership.
 They have to manage extra broker-side state for the subjects they're coordinating.
 
@@ -403,7 +552,6 @@ include::../kafka-sources/clients/src/main/resources/common/message/TxnOffsetCom
 include::../kafka-sources/clients/src/main/resources/common/message/TxnOffsetCommitResponse.json[lines=16..-1]
 ----
 
-
 Transactional producers which are not also consumers don't need to use these RPCs, which are driven use use of the `sendOffsets()` API on the client.
 
 ### Ending a transaction
@@ -450,13 +598,74 @@ include::../kafka-sources/clients/src/main/resources/common/message/WriteTxnMark
 ----
 
 
+## The simple Consumer
 
-// END_TXN
-// WRITE_TXN_MARKERS
+The simple consumer here means a consumer which will consume from partitions assigned to it via the API ("assigned partitions", cf. "subscribed partitions").
 
-## Consumer Fetch
+Following the bootstrapping process already described, the simple consumer can start making `FETCH` requests immediately.
 
-// (including incremental fetch) (consumer FETCH, OFFSET_COMMIT, OFFSET_FETCH)
+### `FETCH`
+
+#### `FetchRequest`
+
+The `FETCH` API is used by both consumers and followers (brokers), and in several different ways.
+
+[id=FetchRequest]
+[source,javascript]
+.The `FETCH` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/FetchRequest.json[lines=16..-1]
+----
+
+In the basic case:
+1. the consumer makes a fetch request which lists the `Topics/Partition` of interest and the `Topics/Partition/FetchOffset` from which to read
+2. it processes the returned data
+3. it makes a new fetch request listing (usually) the same partitions, and the offset it computed from the records in the returned data.
+
+That the offset is explicit, which means a fetch request is idempotent.
+The broker just zero-copies some data from the log between the requested offset and the last stable offset (LSO) of the log to the network.
+In particular, because the broker doesn't really read the data read and it doesn't know how many records were copied, so it doesn't know what the next offset would be.
+
+// TODO example log for a fetch request
+
+#### Incremental fetch 
+Most consumers will request data for the same set of partitions repeatedly, meaning that sending `Topics/Partitions` with each request is wasting some network bandwidth.
+KIP-XXX added support for "incremental fetch sessions" which avoids this at the cost of some memory on the broker.
+The client starts by making an almost ordinatary `FETCH` request, but uses XXX to request the creation of a session.
+If the broker allows it the response will include a session id.
+Subsequent requests from the client can pass the session id instead of the whole set of partitions.
+Or, if the set of partitions changes only the partitions to add or remove from the session need to be included with the request.
+
+// TODO example log for an incremental fetch request
+
+// TODO discuss impl details of the fetch session cache, e.g. limited size, thread contention on the cache.
+
+// TODO limitations of the fetch protocol (e.g. minimal pipelining being a problem on high latency links with high throughput partitions).
+
+#### Consumer follower fetching
+
+NOTE: The term "follower fetch" is ambiguous.
+It could refer to the fetching done by a follower, or fetching from a follower by a consumer.
+Here we mean the latter.
+
+Usually consumers will fetch from the partition leader, since that will result in the smallest end-to-end latency. 
+However, KIP-XXX added support for consumers to fetch from followers. 
+This can be beneficial when the consumer is in a different rack than the leader, but the same rack as a follower, and there are significant (financial or performance) costs to fetching between racks.
+
+The basic idea is that the consumer includes `RackId` in its request and the broker's response will include, in addition to the requested data, a `PreferredReadReplica` nominating a broker in that rack to serve future fetch requests. 
+
+#### `FetchResponse`
+
+[id=FetchResponse]
+[source,javascript]
+.The `FETCH` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/FetchResponse.json[lines=16..-1]
+----
+
+// TODO discuss some of the fields in the response which are used by the consumer
+
+// TODO OFFSET_COMMIT, OFFSET_FETCH)
 
 ## Group protocol
 
@@ -602,7 +811,7 @@ ASIDE: I suspect this is because, if a request was not delivered to a broker (e.
 
 ## Replication protocol
 
-// FETCH
+// TODO follower FETCH and how it differs from consumer fetch
 
 ## Reassignment
 
@@ -709,7 +918,7 @@ CompletingRebalance => Stable : "sync group with assignment received";
 Stable => Dead : "emigration";
 PreparingRebalance => Dead : "emigration";
 CompletingRebalance => Dead : " emigration";
-Empty => Dead : "offxet expiration";
+Empty => Dead : "offset expiration";
 Dead => Dead;
 
 PreparingRebalance => Empty : "all members left";

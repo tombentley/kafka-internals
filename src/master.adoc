@@ -583,6 +583,23 @@ https://cwiki.apache.org/confluence/display/KAFKA/KIP-62%3A+Allow+consumer+to+se
 
 // LEADER_AND_ISR, UPDATE_METADATA, METADATA_FETCH
 
+The controller broadcasts changes to metadata to other brokers via the
+<<UpdateMetadata>> request.
+
+When a broker receives an <<UpdateMetadata>> request it:
+
+* updates its metadata cache, 
+* complete any operations which were in purgatory waiting for some change which was present in the new metadata,
+* sends a response back to the controller.
+
+When the controller receives an <<UpdateMetadata>> response it basically does nothing (only logs). Thus the logic of the controller does not depend on knowing that a metadata request was received.
+
+ASIDE: I suspect this is because, if a request was not delivered to a broker (e.g. due to crash) then, on restart, the broker will get fresh metadata anyway.
+
+**TODO** How and when does the controller send updatametadata requests
+
+**TODO** Discuss difference between clients and brokers wrt metadata propagation.
+
 ## Replication protocol
 
 // FETCH
@@ -763,39 +780,10 @@ OnlinePartition      => OfflinePartition     : "leader dies";
 //   RPC index
 //   Index of message schemas (both public and internal)
 
-
 // Very old content which should be rewritten
 //
 // include::authentication.adoc[]
 
-// // TODO include::authorization.adoc[]
-
 // include::producer.adoc[]
 
-// include::group-protocol.adoc[]
-
 // include::consumer.adoc[]
-
-// // TODO transactions
-
-// // TODO include::admin-client.adoc[]
-
-// include::metadata.adoc[]
-
-// include::broker.adoc[]
-
-// // TODO logs and segments
-
-// // TODO include::controller.adoc[]
-
-// // TODO partition reassignment
-
-// // Kafka connect (and its embedded protocol)
-
-// // Kafka Streams (and its embedded protocol)
-
-// include::protocol.adoc[]
-
-
-
-// include::bibliography.adoc[]

@@ -2,3 +2,4 @@ master.html
 diag-*.svg
 .asciidoctor/
 Gemfile.lock
+*.code-workspace

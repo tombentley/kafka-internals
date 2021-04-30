@@ -15,3 +15,8 @@ fi
 
 docker run --rm -v $(pwd)/output:/build/output:Z -v $(pwd)/src:/build/src:Z "$TAG" \
   asciidoctor -r asciidoctor-diagram -D output -R src src/master.adoc
+docker run --rm -v $(pwd)/output:/build/output:Z -v $(pwd)/src:/build/src:Z "$TAG" \
+  asciidoctor-revealjs \
+  -D output -R src \
+  -a revealjsdir=https://cdn.jsdelivr.net/npm/reveal.js@3.9.2 src/pres_bootstrap.adoc
+cp src/pres.css output/

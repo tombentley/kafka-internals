@@ -1,0 +1,16 @@
+div.reveal div.slides {
+    width: 70% !important;
+}
+
+div.reveal h2  {
+    font-size: 1.2em% !important;
+    text-transform: none;
+}
+
+div.reveal div.listingblock.wide  {
+    width: 100% !important;
+}
+
+.reveal div.listingblock + div.arabic {
+    font-size: 50% !important;
+}

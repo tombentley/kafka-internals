@@ -12,7 +12,7 @@ ENV RUBY_PACKAGES \
   libffi-dev zlib-dev
 RUN apk --no-cache add $BUILD_PACKAGES $RUBY_PACKAGES
 # Install the actual ruby stuff we want
-RUN gem install asciidoctor asciidoctor-diagram pygments.rb json --no-doc
+RUN gem install asciidoctor asciidoctor-diagram asciidoctor-revealjs pygments.rb json --no-doc
 # pygments.rb requires python3 to run pygments...
 RUN apk --no-cache add python3
 # and smcat is a node js app, so let's install all the popular scripting languages and be done

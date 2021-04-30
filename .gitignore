@@ -3,3 +3,4 @@ diag-*.svg
 .asciidoctor/
 Gemfile.lock
 *.code-workspace
+.image

@@ -476,7 +476,7 @@ The association between the transactional id and its PID is written to the relev
 This allows the same PID to be issued to the same (as identified by transactional id) producer even in the event the leader changes (e.g. due to a broker crash) or the producer process restarts.
 
 These persistent PIDs come with an epoch for fencing zombie producers. 
-For example if a new instance of a producer is started, but somehow the old one it still running the request for a PID from the new instance will increment the producer epoch so that RPC from the old one are ingored.
+For example if a new instance of a producer is started, but somehow the old one it still running the request for a PID from the new instance will increment the producer epoch so that RPC from the old one are ignored.
 
 ### Beginning a transaction
 
@@ -600,7 +600,8 @@ include::../kafka-sources/clients/src/main/resources/common/message/WriteTxnMark
 
 ## The simple Consumer
 
-The simple consumer here means a consumer which will consume from partitions assigned to it via the API ("assigned partitions", cf. "subscribed partitions").
+The "simple" consumer here means a consumer which will consume from partitions _assigned_ to it via the API. 
+The group consumer (where the consumer is _subscribed_ to topics) will be covered later.
 
 Following the bootstrapping process already described, the simple consumer can start making `FETCH` requests immediately.
 
@@ -617,24 +618,36 @@ The `FETCH` API is used by both consumers and followers (brokers), and in severa
 include::../kafka-sources/clients/src/main/resources/common/message/FetchRequest.json[lines=16..-1]
 ----
 
-In the basic case:
-1. the consumer makes a fetch request which lists the `Topics/Partition` of interest and the `Topics/Partition/FetchOffset` from which to read
+In the simple consumer case:
+1. the consumer makes a fetch request which lists the assigned `Topics/Partition` of interest and the `Topics/Partition/FetchOffset` from which to read
 2. it processes the returned data
 3. it makes a new fetch request listing (usually) the same partitions, and the offset it computed from the records in the returned data.
 
-That the offset is explicit, which means a fetch request is idempotent.
-The broker just zero-copies some data from the log between the requested offset and the last stable offset (LSO) of the log to the network.
-In particular, because the broker doesn't really read the data read and it doesn't know how many records were copied, so it doesn't know what the next offset would be.
+Since the offset is explicit, such a fetch request is idempotent.
+The broker just zero-copies some data from the log between the requested offset and the high watermark or last stable offset (LSO) of the log to the network.
+Because the broker doesn't really _read_ the data and it doesn't know how many records were copied, so it doesn't know what the next offset would be.
 
 // TODO example log for a fetch request
 
+#### `FetchResponse`
+
+[id=FetchResponse]
+[source,javascript]
+.The `FETCH` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/FetchResponse.json[lines=16..-1]
+----
+
+// TODO example log for a fetch response
+
 #### Incremental fetch 
-Most consumers will request data for the same set of partitions repeatedly, meaning that sending `Topics/Partitions` with each request is wasting some network bandwidth.
-KIP-XXX added support for "incremental fetch sessions" which avoids this at the cost of some memory on the broker.
-The client starts by making an almost ordinatary `FETCH` request, but uses XXX to request the creation of a session.
-If the broker allows it the response will include a session id.
-Subsequent requests from the client can pass the session id instead of the whole set of partitions.
-Or, if the set of partitions changes only the partitions to add or remove from the session need to be included with the request.
+Most consumers will request data for the same set of partitions repeatedly, meaning that sending the Partitions of interest with each request is wasteful of network bandwidth.
+KIP-227 added support for "incremental fetch sessions" which avoids this overhead.
+This makes fetch requests stateful and comes with the cost of some memory on the broker to maintain this broker-side state.
+The client starts by making an almost ordinary `FETCH` request, but uses `SessionId=0` and `SessionEpoch=0` to request the creation of a session.
+If the broker allows a session to be created the response will contain a strictly positive `SessionId`. 
+Most subsequent requests from the client can pass the `SessionId` instead of the whole set of partitions.
+Only when the nature of the client's interest in a partition changes will it need to include partition in a later fetch request.
 
 // TODO example log for an incremental fetch request
 
@@ -649,37 +662,25 @@ It could refer to the fetching done by a follower, or fetching from a follower b
 Here we mean the latter.
 
 Usually consumers will fetch from the partition leader, since that will result in the smallest end-to-end latency. 
-However, KIP-XXX added support for consumers to fetch from followers. 
-This can be beneficial when the consumer is in a different rack than the leader, but the same rack as a follower, and there are significant (financial or performance) costs to fetching between racks.
+However, KIP-392 added support for consumers to fetch from followers. 
+This can be beneficial when the consumer is in a different rack to the leader, but the same rack as a follower, and there are significant (financial or performance) costs to fetching between racks.
 
 The basic idea is that the consumer includes `RackId` in its request and the broker's response will include, in addition to the requested data, a `PreferredReadReplica` nominating a broker in that rack to serve future fetch requests. 
 
-#### `FetchResponse`
 
-[id=FetchResponse]
-[source,javascript]
-.The `FETCH` response
-----
-include::../kafka-sources/clients/src/main/resources/common/message/FetchResponse.json[lines=16..-1]
-----
-
-// TODO discuss some of the fields in the response which are used by the consumer
+### Consumer offset management (`OFFSET_COMMIT` and `OFFSET_FETCH`)
 
 // TODO OFFSET_COMMIT, OFFSET_FETCH)
 
-## Group protocol
+## Group membership protocol
 
 // FIND_COORDINATOR, JOIN_GROUP, SYNC_GROUP, LEAVE_GROUP, HEARTBEAT
-Kafka has a separate group _membership_ protocol and group _state_ protocol.
 
-For the consumer, the group state is basically the assignment of group members to partitions.
-
-The group protocol is also used for KafkaConnect task assignment and in Kafka Streams.
-
-This protocol is rather complex, but it allows the client to have control over the group state, rather than having to build this into the broker. The protocol is generic, allowing the same basic protocol to be used for consumers and Kafka Connect, but that means that the coordinator doesn't understand the group state and therefore:
-
-* Cannot validate offsets are being committed by the member which was assigned that partition, requiring that clients are bug-free in this respect.
-* Cannot invalidate assignments when the topic's metadata changes, pushing this problem onto the client.
+The previous sections discussed how the simple consumer works. 
+We now go into how Kafka enables _groups_ of consumer processes (called members) to work together.
+The design separates group _membership_ and group _state_ into two separate protocols.
+Group membership allows a collection of consumer processes with the same `group.id` to dynamically discover each other and share some state. 
+It copes with members and brokers coming and going.
 
 // refer back to coordinator discovery
 For each group a single broker, known as the group coordinator, is responsible for managing the group management protocol. Before a client can join a group it needs to discover the group coordinator.
@@ -759,7 +760,30 @@ The coordinator stores the group generation, leader etc in the group topic (e.g.
 
 The clients detect failure of the coordinator because they don't receive a <<Heartbeat>> response within the session timeout, so they find the new coordinator and start sending their heartbeats to it. Because the new coordinator can re-read the group topic to discover the membership, generation etc, there is no need for the clients to perform the group membership or state protocols.
 
-### Embedded protocols
+## Group state protocols
+
+The previous section described the group membership protocol, which allows a group to be established and maintained.
+
+This section now goes into how the group state protocol, embedded within the `JOIN_GROUP` and `SYNC_GROUP` APIs, allows members of the group to partition "work" between them.
+
+What constitutes work depends on the application:
+
+* For the consumer it is the partitions to be consumed by the members of the group.
+
+* For Kafka Connect it is the tasks for all the defined connectors.
+
+In either case the `JOIN_GROUP` request from each member will contain a `Subscription`, which represents some work that the member wants done.
+The `Subscription` from each member may be the same or different to other members.
+The group leader receives the Subscriptions from all the members in the group once the group is established. 
+The leader gets to divide the subscriptions between the members of the group and returns an `Assignment` to each member. 
+An `Assignment` represents a members share of the work to be done. 
+
+The separation of membership and state is possible because only the group members need to understand the group state.
+The group state is opaque to coordinators and therefore:
+
+* Coordinators cannot validate that completed work be being marked as done by the member which was assigned it (e.g. offsets are being committed). Instead clients are required to be bug-free in this respect to avoid work being done again following a rebalance.
+* Coordinators cannot invalidate assignments when the topic's metadata changes, pushing this problem onto the client.
+
 
 How a group works in a client (Consumer, Kafka Connect, Kafka Streams) depends on the  `AbstractCoordinator` implementation, which is responsible for generating all the group protocol requests, and handling all the responses, used by the client. That is, it:
 
@@ -768,14 +792,15 @@ How a group works in a client (Consumer, Kafka Connect, Kafka Streams) depends o
 
 The Kafka Consumer and Kafka Connect use separate `AbstractCoordinator` implementations,`ConsumerCoordinator` and `WorkerCoordinator` respectively, because their group state differs:
 
-* For the consumer it is a partitioning of the subscribed topics
-* For a Connect worker it is a partitioning of tasks
+* For the consumer it is a partitioning of the subscribed topic partitions
+* For a Connect worker it is a partitioning of the tasks created by the connectors
 
 `AbstractCoordinator.metadata()` supplies the _protocols_ which get send in the <<JoinGroup>> request.
 
-For the `ConsumerCoordinator` there's another level of pluggability via the `Assignor`. It's at the `Assignor` level that Kafka Streams differs from the plain Kafka Consumer.
-For the `ConsumerCoordinator` it's the `Assignors` which correspond to the protocols in the <<JoinGroup>> request.
+// TODO elaborate on these classes a little.
 
+For the `ConsumerCoordinator` there's another level of pluggability via the `ConsumerPartitionAssignor`. It's at the `ConsumerPartitionAssignor` level that Kafka Streams differs from the plain Kafka Consumer.
+For the `ConsumerCoordinator` it's the assignors which correspond to the protocols in the <<JoinGroup>> request.
 
 https://www.youtube.com/watch?v=QaeXDh12EhE
 
@@ -786,6 +811,90 @@ https://cwiki.apache.org/confluence/display/KAFKA/KIP-429%3A+Kafka+Consumer+Incr
 
 https://cwiki.apache.org/confluence/display/KAFKA/KIP-62%3A+Allow+consumer+to+send+heartbeats+from+a+background+thread
 
+We'll now cover the assignors available to the Kafka Consumer. 
+Later sections will cover the group state implemented by Kafka Connect and how Kafka Streams uses its own assignor.
+
+### Range assignor
+This is the simplest assignor. 
+It does about the simplest possible assignment of partitions to consumers: 
+
+* The _P_ partitions are ordered by topic name and partition id 
+* The _C_ consumers are ordered by `member.id`
+* Each consumer gets a batch _P/C_ or _P/C + 1_of partitions (when the division has a remainder)
+
+For example, with partitions
+
+* topicA-0
+* topicA-1
+* topicA-2
+* topicB-0
+* topicB-1
+
+and consumers `C0` and `C1` we get:
+
+[source]
+.Range-assigned partitions
+----
+C0: topicA-0, topicA-1, topicA-2
+C0: topicB-0, topicB-1
+----
+
+While this is _simple_ it's suffers from a number of practical problems:
+
+* The work involved in consuming the partitions is unlikely to be evenly distributed. In particular, when consuming multiple topics this assignor gives partitions of the hottest topic to the same consumers.
+
+
+### Round robin assignor
+This is another simple assignor. 
+It works a bit like the range assignor except is uses round robin allocation to consumers rather than allocating batches
+
+For example, with partitions
+
+* topicA-0
+* topicA-1
+* topicA-2
+* topicB-0
+* topicB-1
+
+and consumers `C0` and `C1` we get:
+
+[source]
+.Round-robin-assigned partitions
+----
+C0: topicA-0, topicA-2, topicB-2
+C0: topicA-1, topicB-1
+----
+
+This improves over the range assignor by more evenly distributing the partitions for hot topics.
+
+When distributing the partitions, the algorithm will skip a consumer if its subscription didn't include that partition. 
+This can result in imbalanced assignments. 
+
+### Sticky assignor
+KIP-54 added support for the Sticky assignor with the aim of improving on the round robin assignor in two respects:
+
+* Guarantee a balanced assignment of partitions to consumers
+* Try to avoid moving partitions between consumers during a rebalance (thus making use of buffered data already fetched by a consumer, but not yet consumed)
+
+The constraint on balance overrides the constraint on stickiness.
+
+
+### Cooperative sticky assignor
+Assignment revocation provides a chance for the member to commit the work it has done. 
+To avoid performing duplicate work the coordinator needs to ensure that a partition is revoked before it is reassigned.
+The obvious way to guarantee this for all assignments to be revoked when a member joins a group, so that once the coordinator make its assignments all the work is committed and the newly-reassigned work can be shared via the `SYNC_GROUP` API.
+This is known as a "stop-the-world rebalance".
+While it's simple it means that all work stops for a period of time, with a consequent hit on throughput.
+This doesn't really make sense for using sticky assignment, as often a member will get reassigned (substantially or exactly) the same partitions it was assigned before the rebalance. 
+
+KIP-415 (Kafka Connect) and KIP-429 (for the Consumer) introduced cooperative sticky assignment, which allows members to carry on working during a rebalance, at the cost of needing multiple rebalances to reallocate work. 
+Despite the need for multiple rebalances, this results in an overall improvement in throughput.
+
+// TODO a load more detail needed
+
+### Static membership protocol
+KIP-345
+// TODO
 
 
 ## Broker metadata

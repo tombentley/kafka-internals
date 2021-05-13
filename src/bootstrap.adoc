@@ -1,5 +1,12 @@
-## Client bootstrapping
+# Client bootstrapping
 // API_VERSIONS, SASL*, METADATA
+
+## Motivating questions
+
+. How are clients both forwards and backwards compatible with brokers?
+. How does a client discover and keep up to date with the current cluster state?
+
+## Overview
 
 When a client starts up it has no existing knowledge of the cluster state, it only has the set of "bootstrap servers" with which it has been configured.
 Bootstrapping is the process of connecting to one of those servers and discovering the necessary cluster state in order to perform whatever that client is supposed to do. 
@@ -26,9 +33,9 @@ For example, a Sarama client has to be configured with the version of the broker
 
 In the following sections we'll explore these requests in detail.
 
-### `API_VERSIONS`
+## `API_VERSIONS`
 
-#### `ApiVersionsRequest`
+### `ApiVersionsRequest`
 
 The API_VERSIONS request is trivial, having only a couple of optional fields for telling the server the name and version of the client library.
 // TODO for each request: required authz, idempotency
@@ -39,7 +46,7 @@ The API_VERSIONS request is trivial, having only a couple of optional fields for
 include::../kafka-sources/clients/src/main/resources/common/message/ApiVersionsRequest.json[lines=16..-1]
 ----
 
-#### `ApiVersionsResponse`
+### `ApiVersionsResponse`
 
 The response is essentially composed of a object for each API/RPC key, containing the maximum and minimum version supported by the broker. 
 [id=ApiVersionsResponse]
@@ -60,11 +67,11 @@ KIP-584 added support for 'feature gates', which is a mechanism for versioning f
 The supported and enabled features are also included.
 Features are only supported when all servers in a cluster support them, and are enabled by an administrator.
 
-### SASL authentication (`SASL_HANDSHAKE` and `SASL_AUTHENTICATE`)
+## SASL authentication (`SASL_HANDSHAKE` and `SASL_AUTHENTICATE`)
 
 KIP-12 added support for SASL/GSSAPI (aka Kerberos v5) and SSL/TLS. These are both negotiated in the transport layer, and so there's no need for application-level APIs for them.
 
-#### `SaslHandshakeRequest` 
+### `SaslHandshakeRequest` 
 
 The request nominates a SASL mechanism
 
@@ -75,7 +82,7 @@ The request nominates a SASL mechanism
 include::../kafka-sources/clients/src/main/resources/common/message/SaslHandshakeRequest.json[lines=16..-1]
 ----
 
-#### `SaslHandshakeResponse` 
+### `SaslHandshakeResponse` 
 
 The response either rejects the request (`UNSUPPORTED_SASL_MECHANISM`) with a list of the supported mechanisms, or agrees to the selected mechanism.
 
@@ -108,7 +115,7 @@ S(SASL): // return an empty SASL frame    <4>
 While this works for SASL/Plain there is no mechanism-independent way for a server to tell a client the exchange has failed.
 This makes it hard for clients to handle failed exchanges.
 
-#### `SaslAuthenticateRequest` 
+### `SaslAuthenticateRequest` 
 
 For version `SASL_HANDSHAKE` 1+ (defined by KIP-152) the SASL exchange is wrapped in Kafka-level `SASL_AUTHENTICATE` requests and responses
 
@@ -131,7 +138,7 @@ S(Kafka): SaslAuthenticate(error_code=0, sasl_auth_bytes=) // empty       <2>
 include::../kafka-sources/clients/src/main/resources/common/message/SaslAuthenticateRequest.json[lines=16..-1]
 ----
 
-#### `SaslAuthenticateResponse` 
+### `SaslAuthenticateResponse` 
 
 [id=SaslAuthenticateResponse]
 [source,javascript]
@@ -145,13 +152,13 @@ Support for SASL/SCRAM (KIP-84) and SASL/OAUTHBEARER (KIP-255) works in the same
 
 // TODO example logging of successful and failed SASL authentication
 
-### Metadata requests
+## Metadata requests
 
 // The initial cluster request
 The minimum information needed to bootstrap a client is the set of live brokers and how they can be connected to.
 The client obtains this using a `METADATA` request to a bootstrap broker (having first found out its supported API versions and authenticated to it).
 
-#### `MetadataRequest`
+### `MetadataRequest`
 
 [id=MetadataRequest]
 [source,javascript]
@@ -180,7 +187,7 @@ The producer and consumer metadata handling is entirely managed in this way and 
 In the admin client, the user visible methods such as `describeCluster()`, `listTopics()` and `describeTopics()` will always send a metadata request, rather than serving possibly stale data from the cache. 
 The cache itself is not updated by these explicit requests either: The two paths for metadata requests are completely independent. 
 
-#### `MetadataResponse`
+### `MetadataResponse`
 
 [id=MetadataResponse]
 [source,javascript]
@@ -198,7 +205,7 @@ When a partition doesn't have a leader its `LeaderId` will be -1.
 
 // TODO Metadata in the admin client (CLUSTER_METADATA)
 
-### Summary
+## Summary
 
 A "typical" client bootstrapping exchange looks like this:
 [source]

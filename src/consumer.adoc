@@ -1,3 +1,13 @@
+# The Consumer
+
+## Motivating questions
+
+. What fetch-related state resides on a partition leader?
+. When might a consumer successfully fetch from a partition follower?
+. Which broker acts as group coordinator?
+. How does a group detect and recover from the loss of (a) the coordinator, (b) a group member?
+. How many rebalances are required when a new member joins an established group, and how impactful is than on throughput?
+
 
 ## The simple Consumer
 

@@ -1,6 +1,4 @@
-
-
-## APIs
+# APIs
 
 Kafka's is almost uniformly a request-response protocol that runs on TCP or TLS transports. 
 Requests and responses are sometimes collectively called "messages", or RPCs (remote procedure calls). "Messages" is a little confusing since records are also often called "messages", so we'll use the term RPC instead.
@@ -10,7 +8,7 @@ Each request includes a number, called the API key, which identifies the type of
 
 RPCs consist of a header and a body. 
 
-### Request header
+## Request header
 For requests the header looks like this:
 
 [id=RequestHeader]
@@ -24,7 +22,7 @@ We'll discuss the `RequestApiVersion` shortly.
 The `CorrelationId` allows brokers to respond to requests in a different order than the client sent them in: 
 The client uses a unique id for each request, which is included in the response, and the client matches the response to the request using the id.
 
-### Response header
+## Response header
 Responses have their own header, which just includes the correlation id.
 
 [id=ResponseHeader]
@@ -42,35 +40,35 @@ A sufficiently sophisticated client could use this to slow the rate it sends RPC
 This would make most sense for those requests which can be sent to any broker.
 
 
-## Participants
+# Participants
 // define client, broker, producer, consumer, follower, leader, controller, zk
 
 Let's define the participants in the Kafka protocol.
 
-### Clients
+## Clients
 
 The applications which talk to a cluster from the outside are _clients_. These include _producers_, which send messages to the cluster to be appended to logs, and _consumers_ which read from those logs.
 It also includes things like the _admin_ client, which is used to manage the cluster.
 Although Apache Kafka packages its clients as three separate classes this distinction is not meaningful at the protocol level. 
 What defines a client is its use of the client-facing APIs.
 
-### Brokers
+## Brokers
 
 Clients usually talk to _brokers_, which are network server processes with the main purpose of storing logs. 
 When talking about a broker in relation to a particular partition it may be acting in the _leader_ or _follower_ role. In other words, a _leader_ or _follower_ is a broker acting in a certain role with respect to a given partition.
 
-### Controller
+## Controller
 
 The _controller_ is a network server process with the task of coordinating the metadata necessary for the operation of the cluster. 
 In ZK-mode the controller is a broker which takes on the controller role (for a time).
 In KRaft mode the controller is _usually_ one of a separate set of network servers making up the raft cluster. 
 In non-production deployments the raft cluster may instead be made up of a subset of the brokers.
 
-### Kraft nodes
+## Kraft nodes
 
-### ZooKeeper nodes
+## ZooKeeper nodes
 
-### Servers
+## Servers
 
 This document will use the term "server" to collectively refer to something that could be a broker, a KRaft node or possibly a zookeeper node and a more specific term would be incorrect.
 For example, both brokers and kraft nodes support the METADATA RPC, so "server" would be the appropriate term for the recipient of a metadata request.

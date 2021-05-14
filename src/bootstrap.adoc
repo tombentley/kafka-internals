@@ -225,3 +225,14 @@ S: Metadata v11 (ErrorCode=0, Brokers=...)
 ----
 
 And whenever a client is disconnected from a broker we'd expect to see the same pattern, minus the metadata request/response.
+
+
+## Answers to the motivating questions
+
+How are clients both forwards and backwards compatible with brokers?::
+Because the client picks API versions understood by the broker, which it discovered using an `API_VERSIONS` request.
+How does a client discover and keep up to date with the current cluster state?::
+An initial `METADATA` request, followed by further requests when:
+* We need info about something we don't already know about  (e.g. a partition not already cached)
+* We get a response which indicates something changed (e.g. leadership change)
+* Periodically

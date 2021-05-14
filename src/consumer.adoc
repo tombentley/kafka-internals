@@ -83,6 +83,10 @@ The basic idea is that the consumer includes `RackId` in its request and the bro
 
 // TODO OFFSET_COMMIT, OFFSET_FETCH)
 
+
+## Consumer architecture: `Fetcher`
+
+
 ## Group membership protocol
 
 // FIND_COORDINATOR, JOIN_GROUP, SYNC_GROUP, LEAVE_GROUP, HEARTBEAT
@@ -358,3 +362,35 @@ Despite the need for multiple rebalances, this results in an overall improvement
 ### Static membership protocol
 KIP-345
 // TODO
+
+## Consumer architecture: `AbstractCoordinator`
+
+.The group `MemberState` state Machine
+[smcat]
+....
+Unjoined,
+PreparingRebalance,
+CompletingRebalance,
+Stable;
+
+Unjoined => PreparingRebalance  : "sent JoinGroup request, but no response yet" ;
+PreparingRebalance => CompletingRebalance : "received JoinGroup response, but no assignment yet" ;
+CompletingRebalance => Stable : "Joined; sending heartbeats" ;
+....
+
+
+
+## Answers to the motivating questions
+
+What fetch-related state resides on a partition leader?::
+For a non-incremental fetch nothing.
+For an incremental fetch, the partitions of interest, but not the last-fetched offset.
+When might a consumer successfully fetch from a partition follower?::
+When the client is fetching from a follower in the same rack.
+Which broker acts as group coordinator?::
+The one that leading the relevant partition of `__consumer_offsets`.
+How does a group detect and recover from the loss of (a) the coordinator, (b) a group member?::
+The lack of any `HEARTBEAT` requests (for the coordinator), or responses (for the member) within the session timeout.
+How many rebalances are required when a new member joins an established group, and how impactful is than on throughput?::
+It depends on the coordinator/assignor.
+Two for the cooperative stick assignor. Otherwise just one, but they'll be stop-the-world.

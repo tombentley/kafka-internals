@@ -34,7 +34,7 @@ include::protocol-overview.adoc[]
 
 include::bootstrap.adoc[]
 
-include::producer2.adoc[]
+include::producer.adoc[]
 
 include::consumer.adoc[]
 
@@ -61,9 +61,14 @@ ASIDE: I suspect this is because, if a request was not delivered to a broker (e.
 
 **TODO** Discuss difference between clients and brokers wrt metadata propagation.
 
-## Replication protocol
+:leveloffset: +1
 
-// TODO follower FETCH and how it differs from consumer fetch
+include::log_append.adoc[]
+
+:leveloffset: -1
+
+// Replication protocol
+include::replication_protocol.adoc[]
 
 ## Reassignment
 
@@ -82,63 +87,9 @@ ASIDE: I suspect this is because, if a request was not delivered to a broker (e.
 
 //
 // Part 2: Implementation
-## Producer
-### Serialization, partitioning and batching
-### Accumulator
-### Sender
-### TxnManager
-
-.The `TransactionManager` State Machine
-[smcat]
-....
-"Uninit",
-Initializing,
-Ready,
-InTransaction,
-CommittingTxn,
-AbortingTxn,
-AbortableError,
-FatalError;
-
-Ready => "Uninit";
-"Uninit" => Initializing;
-AbortingTxn => Initializing;
-Initializing => Ready;
-CommittingTxn => Ready;
-AbortingTxn => Ready;
-Ready => InTransaction;
-InTransaction => CommittingTxn;
-InTransaction => AbortingTxn;
-AbortableError => AbortingTxn;
-InTransaction => AbortableError;
-CommittingTxn => AbortableError;
-AbortableError => AbortableError;
-"Uninit" => FatalError;
-Initializing => FatalError;
-Ready => FatalError;
-InTransaction => FatalError;
-CommittingTxn => FatalError;
-AbortingTxn => FatalError;
-AbortableError => FatalError;
-....
 
 //
-## Consumer
-### Fetcher
-### `AbstractCoordinator`
 
-.The group `MemberState` state Machine
-[smcat]
-....
-Unjoined,
-PreparingRebalance,
-CompletingRebalance,
-Stable;
-
-Unjoined => PreparingRebalance  : "sent JoinGroup request, but no response yet" ;
-PreparingRebalance => CompletingRebalance : "received JoinGroup response, but no assignment yet" ;
-CompletingRebalance => Stable : "Joined; sending heartbeats" ;
-....
 
 //
 ## Broker
@@ -153,55 +104,6 @@ CompletingRebalance => Stable : "Joined; sending heartbeats" ;
 
 
 
-
-.The Replica State Machine
-[smcat]
-....
-NewReplica,
-OnlineReplica,
-OfflineReplica,
-ReplicaDeletionStated,
-ReplicaDeletionSuccessful,
-ReplicaDeletionIneligible,
-NonexistentReplica;
-
-NewReplica                => OnlineReplica             : "in assigned replicas";
-NewReplica                => OfflineReplica            : "hosting broker dies";
-OnlineReplica             => OfflineReplica            : "hosting broker dies";
-OnlineReplica             => OnlineReplica             ;
-OfflineReplica            => OnlineReplica             ;
-OfflineReplica            => OfflineReplica            ;
-OfflineReplica            => ReplicaDeletionStated     : "deletion started";
-ReplicaDeletionStated     => ReplicaDeletionSuccessful : "no error";
-ReplicaDeletionStated     => ReplicaDeletionIneligible : "error";
-OfflineReplica            => ReplicaDeletionIneligible ;
-ReplicaDeletionIneligible => OnlineReplica             ;
-ReplicaDeletionIneligible => OfflineReplica            : "hosting broker dies";
-ReplicaDeletionSuccessful => NonexistentReplica        : "deleted";
-NonexistentReplica        => NewReplica                : "created";
-....
-
-### PSM
-
-.The Partition State Machine
-[smcat]
-....
-initial,
- NonExistentPartition,
- NewPartition,
- OnlinePartition,
- OfflinePartition;
-
-initial              => NonExistentPartition;
-OfflinePartition     => NonExistentPartition : "deleted";
-NonExistentPartition => NewPartition         : "created";
-NewPartition         => OnlinePartition      : "leader elected";
-OfflinePartition     => OnlinePartition      : "new leader elected";
-NewPartition         => OfflinePartition;
-OnlinePartition      => OfflinePartition     : "leader dies";
-....
-
-### Logs and segments
 ### TxnCoordinator
 ### GroupCoordinator
 //

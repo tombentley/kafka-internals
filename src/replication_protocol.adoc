@@ -1,0 +1,79 @@
+# Replication protocol
+
+Typically, most partitions are replicated across two or more brokers.
+
+## Durability semantics
+
+The producer determines what durability guarantee is needed before a message is truly considered sent.
+This is done using the producer's `acks` config, which can take one of three values:
+
+* `0`, which means "I don't even want a respoonse". 
+This is only suitable for the lowest value data where message loss is completely acceptable and when throughput is the overriding concern.
+An example of this might be a feature like "Customers who bought X also bought..." on Amazon driven by the shopper's clickstream.
+It's more important to compute a result in time for generating the page than it is to always record exactly what the shopper has been looking at. 
+If the content is not available in time then alternative content can be used for that part of the page, since it's not intrinsic to the shopping experience.
+
+* `1`, which means "Send me the response when the broker has it, I don't care whether it's been replicated to any followers". 
+This is suitable when for data where occasional message loss, due to broker restart or disk loss, for example, is acceptable.
+
+* `-1` or `all`, which means "Send me the response only when it's been replicated to _enough_ followers".
+This is suitable for data which needs to be durable against almost all events.
+
+But what constitutes _enough_?
+
+### In-sync replicas
+
+By default, `acks=all` means the messages has been replicated to all of the "in-sync replicas" (ISR).
+A broker is in-sync if it has sent a fetch request within the last `XXX` milliseconds, and that fetch read up to the end of the log
+(log end offset, or LEO).
+Brokers which crash, or fail to make progress will drop out of the ISR after at most this amount of time.
+Brokers which are catching up (or dropping behind) can make as many requests as they like, but won't enter the ISR until they're hitting the LEO.
+
+NOTE: `all` does *not* mean that the batches in the request has been replicated to all brokers.
+
+It's perfectly possible that there are no followers in the ISR, and this is a problem for vanilla `acks=all`: While in the common case it offers better durability than `acks=1`, in the worst case it offers the same durability. And reasoning about data safety requires reasoning about the worst case.
+
+To make `acks=all` provide better worst case guarantees it's semantics can be tweaked using the topic's `min.in.sync.replicas` config.
+This means that the produce response is sent only when there are that many replicas with the message. 
+Setting `min.in.sync.replicas` means we can tolerate one fewer broker failures before suffering data loss.
+But it comes with costs:
+
+* It affects the ability of producers to make progress when more than `#replicas - min.in.sync.replicas` brokers are down.
+* In the normal case is makes latency worse, and in the worst case latency is unbounded.
+
+### Producer architecture: Producer purgatory
+
+### Producer architecture: `ReplicaManager`
+
+
+.The Replica State Machine
+[smcat]
+....
+NewReplica,
+OnlineReplica,
+OfflineReplica,
+ReplicaDeletionStated,
+ReplicaDeletionSuccessful,
+ReplicaDeletionIneligible,
+NonexistentReplica;
+
+NewReplica                => OnlineReplica             : "in assigned replicas";
+NewReplica                => OfflineReplica            : "hosting broker dies";
+OnlineReplica             => OfflineReplica            : "hosting broker dies";
+OnlineReplica             => OnlineReplica             ;
+OfflineReplica            => OnlineReplica             ;
+OfflineReplica            => OfflineReplica            ;
+OfflineReplica            => ReplicaDeletionStated     : "deletion started";
+ReplicaDeletionStated     => ReplicaDeletionSuccessful : "no error";
+ReplicaDeletionStated     => ReplicaDeletionIneligible : "error";
+OfflineReplica            => ReplicaDeletionIneligible ;
+ReplicaDeletionIneligible => OnlineReplica             ;
+ReplicaDeletionIneligible => OfflineReplica            : "hosting broker dies";
+ReplicaDeletionSuccessful => NonexistentReplica        : "deleted";
+NonexistentReplica        => NewReplica                : "created";
+....
+
+
+## Follower fetch
+// TODO follower FETCH and how it differs from consumer fetch
+

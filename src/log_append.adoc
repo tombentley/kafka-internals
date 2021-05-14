@@ -1,0 +1,23 @@
+# Appending to the log
+
+## Broker architecutre: `PartitionStateMachine`
+
+.The Partition State Machine
+[smcat]
+....
+initial,
+ NonExistentPartition,
+ NewPartition,
+ OnlinePartition,
+ OfflinePartition;
+
+initial              => NonExistentPartition;
+OfflinePartition     => NonExistentPartition : "deleted";
+NonExistentPartition => NewPartition         : "created";
+NewPartition         => OnlinePartition      : "leader elected";
+OfflinePartition     => OnlinePartition      : "new leader elected";
+NewPartition         => OfflinePartition;
+OnlinePartition      => OfflinePartition     : "leader dies";
+....
+
+## Logs and segments

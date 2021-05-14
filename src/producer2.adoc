@@ -1,11 +1,24 @@
-## The simple Producer
+# The Producer
+
+## Motivating questions
+
+. What is the only Kafka RPC request that lacks a response?
+. What producer-related state resides on a partition leader?
+. How are zombie producers prevented from writing duplicate records?
+. Which broker acts as transaction coordinator?
+. What is a control batch used for?
+
+
+## Overview
 
 Having done the necessary bootstrapping and discovered which brokers are acting as leader for the relevant partitions, a producer is finally in a position to send messages.
 This is done using a `PRODUCE` request which essentially contains the messages to be appended to the log for some set of partitions led by that broker.
 
-### `PRODUCE`
+## The Simple producer
 
-#### `ProduceRequest`
+## `PRODUCE`
+
+### `ProduceRequest`
 
 The fields in the produce request should be fairly self-explanatory.
 
@@ -16,7 +29,7 @@ The fields in the produce request should be fairly self-explanatory.
 include::../kafka-sources/clients/src/main/resources/common/message/ProduceRequest.json[lines=16..-1]
 ----
 
-#### `ProduceResponse`
+### `ProduceResponse`
 
 When the produce request has `acks=1` or `acks=all` the broker will response with a `ProduceResponse` once all the records have been appended to its, and for `acks=all` enough follower, logs.
 

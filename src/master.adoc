@@ -28,6 +28,8 @@ We're not concerned here with how messages get serialized, networking, threading
 This is purely about what information flows between which peers, and what they might do with it.
 
 
+:leveloffset: +1
+
 include::protocol-overview.adoc[]
 
 include::bootstrap.adoc[]
@@ -36,6 +38,7 @@ include::producer2.adoc[]
 
 include::consumer.adoc[]
 
+:leveloffset: -1
 
 ## Broker metadata
 

@@ -4,3 +4,4 @@ diag-*.svg
 Gemfile.lock
 *.code-workspace
 .image
+output/*

@@ -32,10 +32,10 @@ include::../kafka-sources/clients/src/main/resources/common/message/ProduceReque
 
 ### `ProduceResponse`
 
-When the produce request has `acks=1` or `acks=all` the broker will response with a `ProduceResponse` once all the records have been appended to its, and for `acks=all` enough follower, logs.
+When the produce request has `acks=1` or `acks=all` the broker will respond with a `ProduceResponse` once all the records have been appended to its, or for `acks=all` enough follower's, logs.
 
 NOTE: `acks=0` is a special case in the Kafka protocol: It's the only request which doesn't result in a response being returned.
-That is, `acks=0` doesn't just mean the producer doesn't _wait_ for an acknowledgement, it means there is not acknowledgement at all.
+That is, `acks=0` doesn't just mean the producer doesn't _wait_ for an acknowledgement, it means there is no acknowledgement at all.
 
 [id=ProduceResponse]
 [source,javascript]
@@ -95,26 +95,28 @@ When `send()` is called, on the application thread, the following happens:
 
 The `Sender` is running continually on the IO thread:
 
-. Ask the accumulator which the brokers for which there are ready batches
+. Ask the accumulator for the brokers for which there are ready batches
 . If there are any topics with an unknown leader, request metadata update
 . Filter out the brokers where the network is not ready for sending requests
 . Drain batches from the `Accumulator` for each ready broker
 . Create `PRODUCE` requests and send them to the `NetworkClient`
 
 The `RecordAccumulator` uses a deque:
-* The application thread added to the back of the dequeue
+
+* The application thread adds to the back of the deque
 * The IO threads removes from the front of the deque
 * Failed sends are pushed back on the front of the deque, so that message order is maintained.
 
 ## The idempotent producer
 
-Support for idempotent producers was added in KIP-98.
+Support for idempotent producers was added in https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging[KIP-98].
 
 A `ProduceRequest` is not, on its own, idempotent.
 In particular, if the client doesn't receive a response it may resend a produce request, resulting in duplicate records in the log. 
 It is made idempotent by adding a sequence number to each record prior to sending it the first time and having the broker keep track of the sequence number of the last appended record in each partition. 
 If the broker observes a new record batch whose sequence number is less than or equal to this last appended record it doesn't append the record, but acknowledges it back to the client anyway (since that records must already be in the log).
 Likewise if the broker observes a batch whose sequence number is larger than the next expected number is will also be rejected, because there must be another batch, as-yet unobserved, which needs to be appended _first_.
+// Should we mention the producer epoch here?
 
 The observed sequence number needs to be per-producer and its lifetime is that of the producer process (not its connection to the broker). 
 The broker doesn't otherwise know when a producer process or session ends, so there needs to be an explicit way for the broker to identify produce requests from the same producer session.
@@ -124,7 +126,7 @@ This is the purpose of the producer id.
 
 The producer asks for an identifier from any broker and sends this in each record along with its sequence number for that partition.
 The sequence is basically tied to that PID, so if the producer restarts it will request a PID, be granted a new one and start the sequence again from zero.
-// Is it zero?
+// Is it zero? Yes, but the producer epoch will be increased so this doesn't cause issues with lower sequence number.
 
 #### `InitProducerIdRequest`
 
@@ -151,7 +153,7 @@ But crucially the decision about whether to resend is easy: Resending doesn't ri
 
 ## The transactional producer
 
-Support for transactions was also added in KIP-98.
+Support for transactions was also added in https://cwiki.apache.org/confluence/display/KAFKA/KIP-98+-+Exactly+Once+Delivery+and+Transactional+Messaging[KIP-98].
 
 This allows a producer to send messages to a set of partitions (with leaders on multiple brokers) within a transaction that is committed or aborted atomically. It also guarantees atomicity when sending multiple produce requests to the same broker.
 "Atomic" means either all the messages in the transaction become visible to (suitably configured) consumers (if the transaction was committed) or none of them do (if the transaction was aborted).
@@ -192,7 +194,7 @@ partitionId = abs(hashCode(identity)) mod numPartitions(topicName)
 coordinator = leaderOf(topicName, partitionId)
 ----
 +
-Where the `topicName` is `\__consumer_offsets` for the consumer group coordinator and `__transaction_state` for the transaction coordinator. 
+Where the `topicName` is `+__consumer_offsets+` for the consumer group coordinator and `+__transaction_state+` for the transaction coordinator. 
 In other words, the leaders of partitions of those topics have an additional role on top of their leadership.
 They have to manage extra broker-side state for the subjects they're coordinating.
 
@@ -223,7 +225,7 @@ This is basically the same `INIT_PRODUCER_ID` API we've seen for the idempotent 
 * it must be send to the transaction coordinator,
 * the request includes the `transactional.id` and the transaction timeout
 
-The association between the transactional id and its PID is written to the relevant `__transaction_state` partition by the coordinator.
+The association between the transactional id and its PID is written to the relevant `+__transaction_state+` partition by the coordinator.
 This allows the same PID to be issued to the same (as identified by transactional id) producer even in the event the leader changes (e.g. due to a broker crash) or the producer process restarts.
 
 These persistent PIDs come with an epoch for fencing zombie producers. 
@@ -233,7 +235,7 @@ This means that the choice of `transactional.id` is crucial if zombie producers 
 It needs to identify the "logical producer", and the partitions it will be producing to.
 It needs to be stable across restarts of that producer process.
 If a pool of producers were being used, _something_ has to guarantee that individual messages can only be sent by one producer from the pool.
-If it's possible for an individual message to be sent by the producer instances (possibly as the result of some higher level retry strategy) then duplicates are possible and the transactional semantics are lost.
+If it's possible, in the application logic, for an individual message to be sent multiple times by the producer instances (possibly as the result of some higher level retry strategy) then duplicates are possible and the transactional semantics are lost.
 
 ### Beginning a transaction
 
@@ -254,7 +256,7 @@ The coordinator logs this state so that when the transaction is ended it knows w
 include::../kafka-sources/clients/src/main/resources/common/message/AddPartitionsToTxnRequest.json[lines=16..-1]
 ----
 
-When the coordinator receives such a request it will append to the log for the relevant `__transaction_state` partition,
+When the coordinator receives such a request it will append to the log for the relevant `+__transaction_state+` partition,
 recording the producer (PID) and the partition, before sending the response.
 
 #### `AddPartitionsToTxnResponse`
@@ -270,12 +272,12 @@ include::../kafka-sources/clients/src/main/resources/common/message/AddPartition
 
 ### Adding offsets to a transaction (`ADD_OFFSETS_TO_TXN`)
 
-Streaming applications (that is, those where records consumed from one set of partitions cause new records to be written the other partitions) need a way to add the consumer's offsets to the transaction, since such offset commit also results in appending records to the `__consumer_offsets` partition.
-If `__consumer_offsets` was not included in the transaction (which means if it didn't get markers written on transaction completion) it would be possible for the downstream partitions to get out of sync with the upstream partitions.
+Streaming applications (that is, those where records consumed from one set of partitions cause new records to be written the other partitions) need a way to add the consumer's offsets to the transaction, since such offset commit also results in appending records to the `+__consumer_offsets+` partition.
+If `+__consumer_offsets+` was not included in the transaction (which means if it didn't get markers written on transaction completion) it would be possible for the downstream partitions to get out of sync with the upstream partitions.
 
 #### `AddOffsetsToTxnRequestRequest`
 
-The `AddOffsetsToTxnRequest` is thus the `__consumer_offsets` flavour of the `AddPartitionsToTxnRequest` for a normal topic, and it sent to the _transaction_ coordinator.
+The `AddOffsetsToTxnRequest` is thus the `+__consumer_offsets+` flavour of the `AddPartitionsToTxnRequest` for a normal topic, and is sent to the _transaction_ coordinator.
 
 [id=AddOffsetsToTxnRequestRequest]
 [source,javascript]
@@ -284,7 +286,7 @@ The `AddOffsetsToTxnRequest` is thus the `__consumer_offsets` flavour of the `Ad
 include::../kafka-sources/clients/src/main/resources/common/message/AddOffsetsToTxnRequest.json[lines=16..-1]
 ----
 
-As for the `AddPartitionsToTxnRequest`, the coordinator will append a record to the `__transaction_state` partition recording that the producer interacted with `__consumer_offsets`, before sending the response.
+As for the `AddPartitionsToTxnRequest`, the coordinator will append a record to the `+__transaction_state+` partition recording that the producer interacted with `+__consumer_offsets+`, before sending the response.
 
 #### `AddOffsetsToTxnRequestResponse`
 
@@ -297,7 +299,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/AddOffsetsTo
 
 #### `TxnOffsetCommitRequest`
 
-The `TxnOffsetCommitRequest` is the `__consumer_offsets` flavour of the `ProduceRequest` for a normal topic and is send to the _group_ coordinator.
+The `TxnOffsetCommitRequest` is the `+__consumer_offsets+` flavour of the `ProduceRequest` for a normal topic and is send to the _group_ coordinator.
 
 [id=TxnOffsetCommitRequest]
 [source,javascript]
@@ -331,7 +333,7 @@ In either case the producer sends a `EndTxnRequest` to the transaction coordinat
 include::../kafka-sources/clients/src/main/resources/common/message/EndTxnRequest.json[lines=16..-1]
 ----
 
-The coordinator writes another record to `__transaction_state` recording that the producers transaction was ended.
+The coordinator writes another record to `+__transaction_state+` recording that the producers transaction was ended.
 It can then send a response back to the client.
 
 #### `EndTxnResponse`
@@ -346,8 +348,8 @@ include::../kafka-sources/clients/src/main/resources/common/message/EndTxnRespon
 
 #### `WriteTxnMarkersRequest`
 Although from the producer's perspective the transaction is now complete, the transaction coordinator's work is not yet done.
-The coordinator uses the accumulated state for the transaction in `__transaction_state` to complete the transaction. 
-It does this by sending `WriteTxnMarkersRequests` to each of the brokers leading the partitions added to the transaction, including the `__consumer_offsets` partitions if `sendOffsets()` was used. The transaction markers record whether the transaction was aborted or committed, and will be used later to filter out aborted transactions on consumers with the `read_committed` isolation level.
+The coordinator uses the accumulated state for the transaction in `+__transaction_state+` to complete the transaction. 
+It does this by sending `WriteTxnMarkersRequests` to each of the brokers leading the partitions added to the transaction, including the `+__consumer_offsets+` partitions if `sendOffsets()` was used. The transaction markers record whether the transaction was aborted or committed, and will be used later to filter out aborted transactions on consumers with the `read_committed` isolation level.
 
 [id=WriteTxnMarkersRequest]
 [source,javascript]
@@ -367,8 +369,8 @@ include::../kafka-sources/clients/src/main/resources/common/message/WriteTxnMark
 
 #### HA of the coordinator
 
-Note that by writing to the `__transaction_state` log at every step, the coordinator is able to recover from a broker crash.
-If this happens, the leadership of the `__transaction_state` partition will move to a replica, and so the new leader will also become the new coordinator.
+Note that by writing to the `+__transaction_state+` log at every step, the coordinator is able to recover from a broker crash.
+If this happens, the leadership of the `+__transaction_state+` partition will move to a replica, and so the new leader will also become the new coordinator.
 The new coordinator has access to the transaction state since it was already replicated via the normal log replication protocol.
 In this way the new coordinator is able to pick up where the old coordinator left off. 
 
@@ -447,5 +449,5 @@ AbortableError => FatalError;
 . Can a zombie idempotent producer get fenced? No, because fencing is based on the `transactional.id`, which isn't set for a purely idempotent producer
 . What producer-related state resides on a partition leader? For an idempotent or transactional producer the producer epoch and sequence number.
 . How are zombie producers prevented from writing duplicate records? The coordinator will increment the epoch for the producer; on observing a higher epoch, leaders will fence out lower epochs.
-. Which broker acts as transaction coordinator? The leader of of the relevant partition of `__transaction_state`
+. Which broker acts as transaction coordinator? The leader of of the relevant partition of `+__transaction_state+`
 . What is a control batch used for? Marking whether a transaction was committed or aborted.

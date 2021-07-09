@@ -1,4 +1,4 @@
-FROM alpine:latest
+FROM alpine:3.12
 RUN mkdir -p /build/output && chmod ugo=rwx /build/output
 WORKDIR /build
 ARG kafka_version

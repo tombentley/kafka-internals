@@ -290,7 +290,7 @@ In this way the transaction and group coordinatorship is a role which can migrat
 
 This is basically the same `InitProducerIdRequest` we've seen for the idempotent producer, except:
 
-* it must be send to the transaction coordinator,
+* it must be sent to the transaction coordinator,
 * the request includes the `transactional.id` and the transaction timeout
 
 .Example sequence of RPCs for obtaining a PID in a transactional producer

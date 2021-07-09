@@ -51,6 +51,21 @@ include::../kafka-sources/clients/src/main/resources/common/message/FetchRespons
 
 // TODO example log for a fetch response
 
+.Example sequence of RPCs for simple sessionless fetch
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 250;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer  -> "leader(foo,0)" [label = "FETCH partition=foo-0 FetchOffset=0"];
+  consumer <-- "leader(foo,0)" [label = "records 0..9"];
+  consumer  -> "leader(foo,0)" [label = "FETCH partition=foo-0 FetchOffset=10"];
+  consumer <-- "leader(foo,0)" [label = "records 10..14"];
+}
+....
+
 #### Incremental fetch 
 Most consumers will request data for the same set of partitions repeatedly, meaning that sending the Partitions of interest with each request is wasteful of network bandwidth.
 KIP-227 added support for "incremental fetch sessions" which avoids this overhead.
@@ -58,7 +73,28 @@ This makes fetch requests stateful and comes with the cost of some memory on the
 The client starts by making an almost ordinary `FETCH` request, but uses `SessionId=0` and `SessionEpoch=0` to request the creation of a session.
 If the broker allows a session to be created the response will contain a strictly positive `SessionId`. 
 Most subsequent requests from the client can pass the `SessionId` instead of the whole set of partitions.
+
+.Example sequence of RPCs for simple incremental fetch, the SessionEpoch increments by one with each request.
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 250;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer  -> "leader(foo,0)" [label = "FETCH partition=foo-0 FetchOffset=0 SessionId=0 SessionEpoch=0"];
+  consumer <-- "leader(foo,0)" [label = "records 0..9 SessionId=101"];
+  consumer  -> "leader(foo,0)" [label = "FETCH SessionId=101 SessionEpoch=1"];
+  consumer <-- "leader(foo,0)" [label = "records 10..14"];
+  consumer  -> "leader(foo,0)" [label = "FETCH SessionId=101 SessionEpoch=2"];
+  consumer <-- "leader(foo,0)" [label = "records 15..21"];
+}
+....
+
 Only when the nature of the client's interest in a partition changes will it need to include partition in a later fetch request.
+It can add partitions by including them in the `Topics.Partitions` fields and drop partitions using `ForgottenTopicsData.Partitions`.
+
+
 
 // TODO example log for an incremental fetch request
 
@@ -83,9 +119,12 @@ The basic idea is that the consumer includes `RackId` in its request and the bro
 
 // TODO OFFSET_COMMIT, OFFSET_FETCH)
 
+// cf. TXN_OFFSET_COMMIT
+**TODO**
 
 ## Consumer architecture: `Fetcher`
 
+**TODO**
 
 ## Group membership protocol
 
@@ -133,6 +172,26 @@ In either case the `JOIN_GROUP` response contains the id of the leader, ??the se
 
 A member which joins but doesn't support any protocols supported by the rest of the group gets an error.
 
+.Example sequence of RPCs two consumers forming a group; `consumer2` is elected leader by the coordinator.
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 250;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer1; consumer2; "any broker"; "grp_coordinator\n(broker 12)";
+  consumer1  -> "any broker" [label = "FIND_COORDINATORS type=group id=myGroupId"];
+  consumer1 <-- "any broker" [label = "coordinator=12"];
+  consumer1  -> "grp_coordinator\n(broker 12)" [label = "JOIN_GROUP"];
+  consumer2  -> "any broker" [label = "FIND_COORDINATORS type=group id=myGroupId"];
+  consumer2 <-- "any broker" [label = "coordinator=12"];
+  consumer2  -> "grp_coordinator\n(broker 12)" [label = "JOIN_GROUP"];
+  consumer2 <-- "grp_coordinator\n(broker 12)" [label = "metadata=...", note = "after timeout"];
+  consumer1 <-- "grp_coordinator\n(broker 12)" [label = "metadata=null"];
+}
+....
+
 
 ### Heartbeating and rebalancing.
 
@@ -155,6 +214,24 @@ At this point the leader knows about the other members of the group and their su
 Using this information is decides on each members assignment using the group state protocol.
 It sends the assignments to the coordinator using a `SYNC_GROUP` request.
 The coordinator then sends the non-leaders their assignments in the respective `SYNC_GROUP` responses.
+
+.Continuing example sequence of RPCs: The group leader (`consumer2`) distributes assignments
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 250;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer1; consumer2; "grp_coordinator\n(broker 12)";
+  
+  consumer1 -> "grp_coordinator\n(broker 12)" [label = "SYNC_GROUP"];
+  consumer2 -> "grp_coordinator\n(broker 12)" [label = "SYNC_GROUP assignments=1->foo, 2->bar"];
+  consumer1 <-- "grp_coordinator\n(broker 12)" [label = "assignments=foo"];
+  consumer2 <-- "grp_coordinator\n(broker 12)" [label = "assignments=bar"];
+}
+....
+
 
 ### Offset commit
 

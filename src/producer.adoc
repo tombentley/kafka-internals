@@ -8,6 +8,7 @@
 . How are zombie producers prevented from writing duplicate records?
 . Which broker acts as transaction coordinator?
 . What is a control batch used for?
+. What logs might be needed to resolve a problem with transactions?
 
 
 ## Overview
@@ -52,7 +53,9 @@ What can be inferred when a `PRODUCE` request is sent but no `PRODUCE` response 
 The sender has no idea whether the request reached a broker or not, and must choose between resending the message (risking a duplicate message being appended to the log), or not resending (risking loss of the message). 
 
 ### The record format
-// Record format
+// TODO Record format
+
+**TODO**
 
 ## Producer architecture
 
@@ -128,7 +131,12 @@ The sequence is basically tied to that PID, so if the producer restarts it will 
 
 #### `InitProducerIdRequest`
 
-The exact behaviour depends on whether the producer is transactional (i.e. has `transactional.id` set), or merely idempotent (i.e. does not have `transactional.id` set)
+The exact behaviour depends on whether the producer is idempotent (i.e. does not have `transactional.id` set) or transactional.
+
+We'll defer discussion of the transactional case till later, for now let's focus on the idempotent case.
+The producer sends an `InitProducerIdRequest` to a random broker, which allocates an id, which is guaranteed to be unique. 
+The producer epoch will always be zero since PIDs for idempotent producers can only have a single epoch, since they ephemeral like the producer process.
+
 
 [id=InitProducerIdRequest]
 [source,javascript]
@@ -145,6 +153,38 @@ include::../kafka-sources/clients/src/main/resources/common/message/InitProducer
 ----
 include::../kafka-sources/clients/src/main/resources/common/message/InitProducerIdResponse.json[lines=16..-1]
 ----
+
+The PID and epoch are returned to the producer, which will use them for every `PRODUCE` request made.
+
+.Example sequence of RPCs for an idempotent producer
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  producer  -> "any broker" [label = "INIT_PRODUCER_ID TransactionalId=null"];
+  producer <-- "any broker" [label = "ProducerId=1234 ProducerEpoch=0"];
+  producer  -> "leader(topic,0)" [label = "PRODUCE Records=(ProducerId=1234 ProducerEpoch=0, Sequence=1, ...)"];
+  producer <-- "leader(topic,0)";
+  producer  -> "leader(topic,0)" [label = "PRODUCE Records=(ProducerId=1234 ProducerEpoch=0, Sequence=2, ...)"];
+  producer <-- "leader(topic,0)";
+}
+....
+
+You might recall that the schema for `ProduceRequest` doesn't include fields for the producer id or epoch.
+That's because they're actually part of the v2 message format, so are present in the request embedded within the `Record` field.
+Also present in the v2 message format is a sequence number. 
+The producer is careful to allocate the sequence number once for each batch.
+That is, if the `ProduceRequest` has to be resent, for example because the partition leadership changed, the batch has the same sequence number.
+
+The leader keeps a map of PID to last-appended sequence number (one map for each partition).
+This means it knows what sequence number to expect next for a given producer id. 
+
+* If `actual_sequence_number <= last_appended` if knows that this batch has already been appended, and so it doesn't need to append it again, and returns `DuplicateSequenceNumber` to the producer. The producer can ignore this error code. 
+* If the `actual_sequence_number < last_appended + 1` it knows that a batch must have gone missing. In the absence of log truncation this should never happen, so the leader returns `InvalidSequenceNumber` so the producer, which treats it as a fatal error.
+* Only if `actual_sequence_number < last_appended + 1` will the leader append to the log.
 
 What can be inferred when an idempotent `PRODUCE` request is sent but no `PRODUCE` response is received? Still nothing! 
 But crucially the decision about whether to resend is easy: Resending doesn't risk duplicate messages being appended to the log.
@@ -172,17 +212,44 @@ Extra interbroker communication is also required.
 
 The producer than then repeat steps 3 to 4 indefinitely, or until the producer becomes fenced. 
 
+.Example sequence of RPCs for a transaction producer (interbroker RPCs not shown)
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  producer  -> "any broker" [label = "FIND_COORDINATORS TransactionalId=myId"];
+  producer <-- "any broker" [label = "Coordinator=1"];
+  producer  -> "txn_coordinator" [label = "INIT_PRODUCER_ID TransactionalId=myId"];
+  producer <-- txn_coordinator [label = "ProducerId=1234 ProducerEpoch=2"];
+  producer  -> txn_coordinator [label = "ADD_PARTITION_TO_TXN partition=foo-0"];
+  producer <-- txn_coordinator;
+  producer  -> "leader(foo,0)" [label = "PRODUCE Records=(ProducerId=1234 ProducerEpoch=0, ...)"];
+  producer <-- "leader(foo,0)";
+  producer  -> txn_coordinator [label = "ADD_PARTITION_TO_TXN partition=bar-1"];
+  producer <-- txn_coordinator;
+  producer  -> "leader(bar,1)" [label = "PRODUCE Records=(ProducerId=1234 ProducerEpoch=0, ...)"];
+  producer <-- "leader(bar,1)";
+  producer  -> txn_coordinator [label = "END_TXN commit=true"];
+  producer <-- txn_coordinator;
+}
+....
+
+Complicated as the above diagram is, it's actually a simplification. 
+It is not showing the interbroker communication, and the situation for a streaming application it is more complex.
+
 [[coordinator-discovery,coordinator discovery]]
 ### Coordinator discovery (`FIND_COORDINATOR`)
 
-NOTE: Coordinator discover is used for both transactional producers and consumer groups, so in this section we'll talk about the client, rather than the producer. We'll refer back to this section later then discussing consumer groups.
+NOTE: Coordinator discovery is used for both transactional producers and consumer groups, so in this section we'll talk about the client, rather than the producer. We'll refer back to this section later then discussing consumer groups.
 
 Coordinator discovery is about unambiguously identifying a unique broker based on some identity. 
 For the transactional producer that identity is its `transactional.id`. 
 For a member of a consumer group that identity is its `group.id`.
-Let's use the word "subjects" to refer to these coordinator-requiring entities in general. 
 
-1. The subject queries a random broker, giving the required coordinator type and the subject's identity in a `FIND_COORDINATOR` request.
+1. The client queries a random broker, giving the required coordinator type and the client's identity in a `FIND_COORDINATORS` request
 2. The random broker receives the request and determines the coordinator according to
 +
 [source]
@@ -194,7 +261,7 @@ coordinator = leaderOf(topicName, partitionId)
 +
 Where the `topicName` is `\__consumer_offsets` for the consumer group coordinator and `__transaction_state` for the transaction coordinator. 
 In other words, the leaders of partitions of those topics have an additional role on top of their leadership.
-They have to manage extra broker-side state for the subjects they're coordinating.
+They have to manage extra broker-side state for the clients they're coordinating.
 
 3. The client receives a `FIND_COORDINATOR` response and starts talking to this coordinator.
 
@@ -216,34 +283,55 @@ include::../kafka-sources/clients/src/main/resources/common/message/FindCoordina
 include::../kafka-sources/clients/src/main/resources/common/message/FindCoordinatorResponse.json[lines=16..-1]
 ----
 
+This mechanism ensures that all the state on the broker about that client can be persistect to the log, and log replication ensures that should the broker crash the new leader will have access to exactly the same state.
+In this way the transaction and group coordinatorship is a role which can migrate between brokers (because it's tied to partition leadership).
+
 ### Obtaining an transactional Producer Id (PID)
 
-This is basically the same `INIT_PRODUCER_ID` API we've seen for the idempotent producer, except:
+This is basically the same `InitProducerIdRequest` we've seen for the idempotent producer, except:
 
 * it must be send to the transaction coordinator,
 * the request includes the `transactional.id` and the transaction timeout
 
-The association between the transactional id and its PID is written to the relevant `__transaction_state` partition by the coordinator.
-This allows the same PID to be issued to the same (as identified by transactional id) producer even in the event the leader changes (e.g. due to a broker crash) or the producer process restarts.
+.Example sequence of RPCs for obtaining a PID in a transactional producer
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  app       ->> producer [label="initTransactions()"];
+  producer  -> "any broker" [label = "FIND_COORDINATORS TransactionalId=myId"];
+  app      <<-- producer;
+  producer <-- "any broker" [label = "Coordinator=1"];
+  producer  -> "txn_coordinator" [label = "INIT_PRODUCER_ID TransactionalId=myId"];
+  producer <-- "txn_coordinator" [label = "ProducerId=1234 ProducerEpoch=42"];
+  
+}
+....
 
-These persistent PIDs come with an epoch for fencing zombie producers. 
-For example if a new instance of a producer is started, but somehow the old one is still running, the request for a PID from the new instance will increment the producer epoch so that RPC from the old one are ignored.
+The association between the transactional id and its PID is written to the relevant `__transaction_state` partition by the coordinator.
+This allows the same PID to be issued to the same producer (as identified by transactional id) even in the event the leader changes (e.g. due to a broker crash) or the producer process restarts. 
+Each time a PID is requested for a given transactional id the transaction coordinator will increment the producer epoch associated with it.
+The `<PID, Epoch>` pair thus uniquely identify a producer session, and in particular a broker receiving a state from an old instance of the producer application will observe a producer epoch that's smaller than the epoch it's most recently observed and can thus fence our the zombie producer. 
 
 This means that the choice of `transactional.id` is crucial if zombie producers are going to be effectively fenced off.
 It needs to identify the "logical producer", and the partitions it will be producing to.
 It needs to be stable across restarts of that producer process.
 If a pool of producers were being used, _something_ has to guarantee that individual messages can only be sent by one producer from the pool.
-If it's possible for an individual message to be sent by the producer instances (possibly as the result of some higher level retry strategy) then duplicates are possible and the transactional semantics are lost.
+If it's possible for an individual message to be sent by producer instances with different transactional ids (possibly as the result of some higher level retry strategy) then duplicates are possible and the transactional semantics are lost.
+
 
 ### Beginning a transaction
 
 There is no explicit RPC for starting a transaction. 
-The producer API method only changes local state.
+The producer's `beginTransaction()` API method only changes state local to the producer.
 
 ### Adding partitions to a transaction (`ADD_PARTITIONS_TO_TXN`)
 
 The first time the producer sends a `ProduceRequest` to a new partition (that's not yet part of this transaction) it will also send an `AddPartitionsToTxnRequest` to the coordinator.
-The coordinator logs this state so that when the transaction is ended it knows which brokers need to be sent requests to write transaction markers.
+
 
 #### `AddPartitionsToTxnRequest`
 
@@ -254,8 +342,7 @@ The coordinator logs this state so that when the transaction is ended it knows w
 include::../kafka-sources/clients/src/main/resources/common/message/AddPartitionsToTxnRequest.json[lines=16..-1]
 ----
 
-When the coordinator receives such a request it will append to the log for the relevant `__transaction_state` partition,
-recording the producer (PID) and the partition, before sending the response.
+The coordinator records this state in `__transaction_state` so that when the transaction is ended it knows which brokers need to be sent requests to write transaction markers.
 
 #### `AddPartitionsToTxnResponse`
 
@@ -266,16 +353,48 @@ recording the producer (PID) and the partition, before sending the response.
 include::../kafka-sources/clients/src/main/resources/common/message/AddPartitionsToTxnResponse.json[lines=16..-1]
 ----
 
+.Example sequence of RPCs transactional production
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  app       ->> producer [label="send(topic=foo, partition=0)"];
+  producer  -> "txn_coordinator" [label = "ADD_PARTITIONS_TO_TXN TransactionalId=myId partition=foo-0"];
+  producer  -> "leader(foo,0)" [label = "PRODUCE"];
+  app      <<-- producer;
+  producer  <-- "leader(foo,0)";
+  producer  <-- "txn_coordinator";
+}
+....
+
 // Example transactional PRODUCE with PID, epoch, sequence number
 
-### Adding offsets to a transaction (`ADD_OFFSETS_TO_TXN`)
+### Adding offsets to a transaction (`ADD_OFFSETS_TO_TXN`, `TXN_OFFSET_COMMIT`)
+
+NOTE: This section is only relevant for non-streaming applications. For pure-producers you can skip to the following section.
 
 Streaming applications (that is, those where records consumed from one set of partitions cause new records to be written the other partitions) need a way to add the consumer's offsets to the transaction, since such offset commit also results in appending records to the `__consumer_offsets` partition.
+In other words, a consumer committing offsets is causing log appends for the transaction scope needs to include those log appends.
 If `__consumer_offsets` was not included in the transaction (which means if it didn't get markers written on transaction completion) it would be possible for the downstream partitions to get out of sync with the upstream partitions.
+The `AddOffsetsToTxnRequest` is thus the `__consumer_offsets` flavour of the `AddPartitionsToTxnRequest` for a normal topic, and is sent to the _transaction_ coordinator after the `KafkaConsumer.commit`
+
+In the Java API this is achieved by `KafkaProducer.sendOffsetsToTransaction()`. 
+This method acts as a bridge between consumer state, and a producers transactional state.
+The consumer group state is extracted from the consumer instance using `KafkaConsumer.groupMetadata()` and consists of:
+
+* group id
+* generation id
+* member id
+* group instance id
+
+`KafkaProducer.sendOffsetsToTransaction()` first sends a `AddOffsetsToTxnRequest` to the _transaction_ coordinator, which is handled in essentially exactly the same way as `AddPartitionsToTxn`.
+When the producer receives an OK `AddOffsetsToTxnRequestResponse` it will send a `TxnOffsetCommitRequest` to the _group_ coordinator.
+The handling is different, but ultimately it calls into the same `GroupMetadataManager.storeOffsets()` method that's used for normal consumer commit (`OffsetCommitRequest`).
 
 #### `AddOffsetsToTxnRequestRequest`
-
-The `AddOffsetsToTxnRequest` is thus the `__consumer_offsets` flavour of the `AddPartitionsToTxnRequest` for a normal topic, and it sent to the _transaction_ coordinator.
 
 [id=AddOffsetsToTxnRequestRequest]
 [source,javascript]
@@ -297,7 +416,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/AddOffsetsTo
 
 #### `TxnOffsetCommitRequest`
 
-The `TxnOffsetCommitRequest` is the `__consumer_offsets` flavour of the `ProduceRequest` for a normal topic and is send to the _group_ coordinator.
+The `TxnOffsetCommitRequest` is the transactional flavour of the `OffsetCommitRequest` and is send to the _group_ coordinator.
 
 [id=TxnOffsetCommitRequest]
 [source,javascript]
@@ -314,6 +433,25 @@ include::../kafka-sources/clients/src/main/resources/common/message/TxnOffsetCom
 ----
 include::../kafka-sources/clients/src/main/resources/common/message/TxnOffsetCommitResponse.json[lines=16..-1]
 ----
+
+.Example sequence of RPCs for committing offsets in a transactional streaming application
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  app       ->> consumer [label="groupMetadata()"];
+  app      <<-- consumer;
+  app       ->> producer [label="sendOffsetsToTransaction()"];
+  producer  -> "txn_coordinator" [label = "ADD_OFFSETS_TO_TXN TransactionalId=myId"];
+  app      <<-- producer;
+  producer  <-- "txn_coordinator";
+  producer  -> "grp_coordinator" [label = "TXN_OFFSET_COMMIT TransactionalId=myId"];
+  producer <-- "grp_coordinator";
+}
+....
 
 Transactional producers which are not also consumers don't need to use these RPCs, which are driven by use of the `sendOffsets()` API on the client.
 
@@ -364,6 +502,29 @@ include::../kafka-sources/clients/src/main/resources/common/message/WriteTxnMark
 ----
 include::../kafka-sources/clients/src/main/resources/common/message/WriteTxnMarkersResponse.json[lines=16..-1]
 ----
+
+.Example sequence of RPCs for ending a transaction
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  app       ->> producer [label="commitTransaction()"];
+  producer  -> "txn_coordinator" [label = "END_TXN commit=true"];
+  producer  <-- "txn_coordinator";
+  app      <<-- producer;
+  txn_coordinator  -> "leader(foo,0)" [label = "WRITE_TXN_MARKERS"];
+  txn_coordinator  -> "leader(bar,1)" [label = "WRITE_TXN_MARKERS"];
+  txn_coordinator  -> "leader(__consumer_offsets,12)" [label = "WRITE_TXN_MARKERS"];
+  txn_coordinator <-- "leader(bar,1)";
+  txn_coordinator <-- "leader(__consumer_offsets,12)";
+  txn_coordinator <-- "leader(foo,0)";
+}
+....
+
+
 
 #### HA of the coordinator
 
@@ -443,9 +604,19 @@ AbortableError => FatalError;
 
 ## Answers to the motivating questions
 
-. What is the only Kafka RPC request that lacks a response? `PRODUCE` with `acks=0`
-. Can a zombie idempotent producer get fenced? No, because fencing is based on the `transactional.id`, which isn't set for a purely idempotent producer
-. What producer-related state resides on a partition leader? For an idempotent or transactional producer the producer epoch and sequence number.
-. How are zombie producers prevented from writing duplicate records? The coordinator will increment the epoch for the producer; on observing a higher epoch, leaders will fence out lower epochs.
-. Which broker acts as transaction coordinator? The leader of of the relevant partition of `__transaction_state`
-. What is a control batch used for? Marking whether a transaction was committed or aborted.
+What is the only Kafka RPC request that lacks a response?::
+`PRODUCE` with `acks=0`
+Can a zombie idempotent producer get fenced?::
+No, because fencing is based on the `transactional.id`, which isn't set for a purely idempotent producer
+What producer-related state resides on a partition leader?::
+For an idempotent or transactional producer the producer epoch and sequence number.
+How are zombie producers prevented from writing duplicate records?::
+The coordinator will increment the epoch for the producer; on observing a higher epoch, leaders will fence out lower epochs.
+Which broker acts as transaction coordinator?::
+The leader of of the relevant partition of `__transaction_state`
+What is a control batch used for?::
+Marking whether a transaction was committed or aborted.
+What logs might be needed to resolve a problem with transactions?::
+The producer's, the transaction coordinator's, the brokers that were leaders for the partitions producers to, and possibly the consumer group coordinator's too for a streaming application.
+If there were changes in leadership during the time of the problem the old and new leader's logs could be needed.
+Obviously, if the problem is better defined then you can narrow this list down somewhat.

@@ -6,7 +6,7 @@ Tom Bentley
 :toclevels: 4
 :source-highlighter: pygments
 :icons: font
-
+:seqdiag-fontpath: /usr/share/fonts/truetype/inconsolata/Inconsolata-Regular.ttf
 
 :leveloffset: +1
 
@@ -38,92 +38,16 @@ include::producer.adoc[]
 
 include::consumer.adoc[]
 
-:leveloffset: -1
+include::broker.adoc[]
 
-## Broker metadata
+include::admin-client.adoc[]
 
-// LEADER_AND_ISR, UPDATE_METADATA, METADATA_FETCH
-
-The controller broadcasts changes to metadata to other brokers via the
-<<UpdateMetadata>> request.
-
-When a broker receives an <<UpdateMetadata>> request it:
-
-* updates its metadata cache, 
-* complete any operations which were in purgatory waiting for some change which was present in the new metadata,
-* sends a response back to the controller.
-
-When the controller receives an <<UpdateMetadata>> response it basically does nothing (only logs). Thus the logic of the controller does not depend on knowing that a metadata request was received.
-
-ASIDE: I suspect this is because, if a request was not delivered to a broker (e.g. due to crash) then, on restart, the broker will get fresh metadata anyway.
-
-**TODO** How and when does the controller send updatametadata requests
-
-**TODO** Discuss difference between clients and brokers wrt metadata propagation.
-
-:leveloffset: +1
-
-include::log_append.adoc[]
+include::controller.adoc[]
 
 :leveloffset: -1
 
-// Replication protocol
-include::replication_protocol.adoc[]
-
-## Reassignment
-
-## Kraft
-
-## Admin requests
-
-// LIST_GROUPS, DESCRIBE_GROUPS
-// *_ACLS
-// CREATE_/DELETE_TOPICS, CREATE_PARTITIONS
-// DELETE_RECORDS
-// Other DESCRIBE_*
-// KIP-700 DESCRIBE_CLUSTER
-
-# Implementation
-
-//
-// Part 2: Implementation
-
-//
-
-
-//
-## Broker
-### Startup
-### Shutdown
-#### Controller shutdown
-#### Full disks
-#### Crash
-### ReplicaManager
-### RSM
-### GroupCoordinator
-
-
-
-### TxnCoordinator
-### GroupCoordinator
-//
-##  Controller
 //
 ## Kafka Connect
 //
 ## Kafka Streams
 //
-// Part 3: Operations
-//
-// Appendices
-//   KIP index
-//   RPC index
-//   Index of message schemas (both public and internal)
-
-// Very old content which should be rewritten
-//
-// include::authentication.adoc[]
-
-// include::producer.adoc[]
-
-// include::consumer.adoc[]

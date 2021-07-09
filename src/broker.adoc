@@ -1,0 +1,289 @@
+# Broker
+
+## Motivating questions
+
+. When does a `FETCH` result in a log append?
+. How is the ISR defined?
+. How is the LSO defined?
+. Which APIs are considered part of the 'interbroker protocol'?
+
+## Introduction
+
+The broker's primary responsibility is to store batches of records for a time, and eventually to delete them.
+This means that the most obviously important task for a broker are handling client `PRODUCE` and `FETCH` requests.
+However, it also means replicating the logs of partition leaders, thus making `FETCH` requests as well as responding to them
+
+The broker also has a number of secondary functions: 
+* Serving `METADATA` to clients,
+* Providing group and transaction coordination for clients,
+* Handling certain administrative requests
+* and perhaps hosting the controller
+
+[source]
+.The Broker architecture
+```
+  network  -->  Processor  -->  RequestChannel  -->  KafkaApis
+                                                         |
+           +--------------+----------------+-------------+---------------+
+           |              |                |             |               |
+           v              v                v             v               v
+     ReplicaManager   AdminManager   FetchManager   QuotaManager   Coordinators
+           |                               |
+           +-----------+    +--------------+
+           |           |    |              |
+           v           v    v              v
+      Purgatories    LogManager    FetchSessionCache
+                         |
+                         v
+                OS/File system/Disk
+```
+
+## Logs, segments and indexes
+
+In Kafka a partition's log is a directory containing regular files:
+
+* Segments, named like `_nnnn_.log`, where the _nnnn_ indicate the offset of the first record in the segment. 
+* Offset indexes, named like `_nnnn_.index`
+* Timestamp indexes, named like `_nnnn_.timeindex`
+* If transactional producers have appended to the log, transaction indexes, named like `_nnnn_.txnindex`
+* If transactional producers have appended to the log, producer snapshot files, named like `_nnnn_.snapshot`
+
+These files can also have an optional extra suffix depending on where the segment is in its lifecycle. For example, `000000000000.log.deleted` is a segment that's in the process of being deleted.
+
+// TODO talk about posix fs semantics?
+
+// TODO segment structure
+
+// TODO index structure
+
+// LEO, LSO, HW, last stable offset
+
+## Appending to the log
+
+Let's start by covering `Log.append()`, which does the actual work of appending to the log.
+
+. Acquire the per-log lock
+. Recompress the batches if necessary
+. Validate the records and assigns start and end offsets to the buffer of batches.
+. Maybe roll the active segment, if appending the (possibly now recompressed) buffer would make the segment exceed the maximum size
+. Validate idempotent/transactional state (e.g. check for duplicate sequence number)
+. If there were no duplicates, delegate to `Segment.append` to actually append the buffer to the segment
+. Update the LEO
+. Update the producer state (e.g. update the last appended sequence number)
+. Update the transaction index
+. Increment the first unstable offset (which can change the LSO calculation)
+. If needed flush the segment and indexes
+. Release the lock
+
+// TODO elaborate on when the offset and timestamp indexes get updated
+
+This is carefully constructed so that in the event of failure the log isn't left in a corrupted state.
+In particular, the segment gets written before the indexes are updated, since the indexes and always be reconstructed from the segments.
+
+How `Log.append()` gets called depends on context.
+
+* For a producer append with no replication (i.e. RF=1) there's not a lot more to it, apart from the `Partitions` high watermark getting updated.
+* For a follower append there's also not a lot 
+
+. `KafkaApis` handles the request and eventually a map of partition to buffer-of-batches to the `ReplicaManager`.
+. `ReplicaManager` appends to the local log:
+  . `ReplicaManager` calls `Partition.appendRecordsToLeader`, which delegates to `Log.appendAsLeader` and `Log.append`, which we've already covered.
+  . `Partition` may increment the high watermark if the leader is the only replica in the ISR.
+. `ReplicaManager` does some other things we'll discuss later
+
+
+## Reading from the log
+
+KafkaApis.handleFetchRequest: 
+. Get a `FetchContext` from the `FetchManager`
+. Authorize
+. `FetchContext.updateAndGenerateResponseData`
+// TODO....
+
+Anyway we end up in `ReplicaManager.fetchMessages`:
+
+. Determine, based on what made the fetch request, how to determine the "end of the log"
+. `readFromLocalLog().read()`:
+  . Determine how much to read
+  . Get the partition
+  . Determine the preferred read replica, and if there is one return a empty `LogReadResult` referring to that replica.
+  . Do the read (`Partition.readRecords`):
+    . `Log.read()`
+  . Figure out throttling
+  . Return the `LogReadResult`
+
+
+## Fetch session cache
+KIP-227 added support for incremental fetch requests, which requires the broker to maintain some per-fetcher state between requests.
+This state is kept in the fetch session cache.
+The cache has a fixed size, so establishing a fetch session depends on whether there's a slot free, or if not, whether an existing slot in the cache can be freed up.
+
+The eviction policy is heuristic, aiming to evict the least valuable session:
+
+* New sessions are more valuable that expired sessions.
+* Follower fetches are more valuable that consumer fetches (consumer sessions cannot evict follower sessions).
+* Fetch sessions with lots of partitions are more valuable than those with fewer partitions (since lots of partitions would bloat a full fetch request more).
+
+The cache represents a global resource on the broker which is shared between all fetchers and through which one fetch can impact the performance of another.
+It therefore can be the source of noisy neighbour problems in multi tenant scenarios.
+
+Implementing the eviction criteria also requires maintaining multiple mutable data structures, which need synchronization. 
+Contention on this synchronization has been a source of performance problems in the past.   
+
+## Log replication
+
+Typically, most partitions are replicated across two or more brokers, so having covered leader append, let's talk about log replication fits into this picture.
+
+### Durability semantics
+
+The producer determines what durability guarantee is needed before a message is truly considered sent.
+This is done using the producer's `acks` config, which can take one of three values:
+
+* `0`, which means "I don't even want a response". 
+This is only suitable for the lowest value data where message loss is completely acceptable and when throughput is the overriding concern.
+An example of this might be a feature like "Customers who bought X also bought..." on Amazon driven by the shopper's clickstream.
+It's more important to compute a result in time for generating the page than it is to always record exactly what the shopper has been looking at. 
+If the content is not available in time then alternative content can be used for that part of the page, since it's not intrinsic to the shopping experience.
+
+* `1`, which means "Send me the response when the broker has it, I don't care whether it's been replicated to any followers". 
+This is suitable when for data where occasional message loss, due to broker restart or disk loss, for example, is acceptable.
+
+* `-1` or `all`, which means "Send me the response only when it's been replicated to _enough_ followers".
+This is suitable for data which needs to be durable against almost all events.
+
+But what constitutes _enough_?
+
+#### In-sync replicas
+
+By default, `acks=all` means the messages has been replicated to all of the "in-sync replicas" (ISR).
+
+A broker is in-sync if it has sent a fetch request within the last `XXX` milliseconds, and that fetch read up to the end of the log
+(log end offset, or LEO).
+
+Brokers which crash, or fail to make progress will drop out of the ISR after at most this amount of time.
+Brokers which are catching up (or dropping behind) can make as many requests as they like, but won't enter the ISR until they're hitting the LEO.
+
+NOTE: `all` does *not* mean that the batches in the request has been replicated to all brokers.
+
+It's perfectly possible that there are no followers in the ISR, and this is a problem for vanilla `acks=all`: While in the common case it offers better durability than `acks=1`, in the worst case it offers the same durability. And reasoning about data safety requires reasoning about the worst case.
+
+To make `acks=all` provide better worst case guarantees it's semantics can be tweaked using the topic's `min.in.sync.replicas` config.
+This means that the produce response is sent only when there are that many replicas with the message. 
+Setting `min.in.sync.replicas` means we can tolerate one fewer broker failures before suffering data loss.
+But it comes with costs:
+
+* It affects the ability of producers to make progress when more than `#replicas - min.in.sync.replicas` brokers are down.
+* In the normal case is makes latency worse, and in the worst case latency is unbounded.
+
+// TODO how the leader notifies the controller that a follower has dropped out of, or has joined, the ISR
+
+#### Broker architecture: Purgatories
+
+Various requests to the broker start work which will take some time to complete. 
+Letting the IO (i.e. request handling) thread wait for that work to complete is a waste of resources (threads), so 
+in these cases the work is completed by some other thread, which ultimately sends the response to the `RequestChannel`.
+The classes which implement this are known as purgatories.
+
+The `ProducerPurgatory` is an example of this. 
+When `acks=all` the `PRODUCE` response can only be sent when all of the ISR has replicated the appended batches. 
+So once the leader has appended the batches to its log the `PRODUCE` request is placed in purgatory
+awaiting the necessary `FETCH` requests from in-sync followers.
+When the last of those arrives the `PRODUCE` response gets queued on the `RequestChannel` by the IO thread handling the `FETCH` request.
+
+### Broker architecture: `ReplicaManager`
+
+## Follower fetch
+// TODO follower FETCH and how it differs from consumer fetch
+
+
+## Metadata
+
+// LEADER_AND_ISR, UPDATE_METADATA, METADATA_FETCH
+
+The controller broadcasts changes to metadata to other brokers via the
+<<UpdateMetadata>> request.
+
+When a broker receives an <<UpdateMetadata>> request it:
+
+* updates its metadata cache, 
+* complete any operations which were in purgatory waiting for some change which was present in the new metadata,
+* sends a response back to the controller.
+
+When the controller receives an <<UpdateMetadata>> response it basically does nothing (only logs). Thus the logic of the controller does not depend on knowing that a metadata request was received.
+
+ASIDE: I suspect this is because, if a request was not delivered to a broker (e.g. due to crash) then, on restart, the broker will get fresh metadata anyway.
+
+// TODO How and when does the controller send updatametadata requests
+
+// TODO Discuss difference between clients and brokers wrt metadata propagation.
+
+//
+
+
+
+## Controlled Shutdown
+
+Controlled shutdown means that the broker's signal handlers got to run (e.g. due to `SIGTERM`, as opposed to `SIGKILL`). 
+In this case a broker will do the following:
+
+. Try to tell the controller that it is shutting down: 
+  . Try to find the controller, getting a connection to it if necessary.
+  . Send the controller a `ControlledShutdownRequest` waiting for the response.
+  . This maybe retried a number of times
+. Stop processing new requests
+. Shutdown the various broker components
+  . In particular when shutting down the log manager the logs are flushed before closing a clean shutdown file is written, recording the fact that the logs were closed in an orderly fashion.
+. If the broker is the controller, then perform controller shutdown 
+// TODO forward reference
+. Close the ZK client, ending the ZK session, and thus (indirectly) informing the controller that the requested shutdown has been completed.
+
+// TODO how this differs with Kraft (heartbeats not controlled shutdown request)
+
+## Uncontrolled shutdown
+
+A broker can shutdown uncleanly due to an unhandled signal from the OS (e.g. `SIGKILL`) or due to an unrecoverable error that it has detected internally (such as all disks being full).
+
+When a broker shuts down uncleanly:
+
+* The logs won't be closed cleanly, but the absence of a clean shutdown file will record this fact on the filesystem, so that log recovery is performed on restart.
+* The ZK client won't be closed cleanly, meaning the ZK session will timeout. Once it has timed out the controller will be able to elect new leaders for those partitions the broker was leading.
+
+
+## Startup
+
+The broker start up sequence:
+
+. Start the ZK client
+. Generate or read the cluster id (to check this broker is (re)joining the right cluster)
+. Determine broker id
+. Read it's dynamic broker config
+. Initialise metrics and quotas
+. Start the log manager
+  . Load logs, performing log recovery, if necessary.
+  . Schedule background tasks and the log cleaner.
+. Determine it's supported API versions, supported and enabled features.
+. Start the socket server, binding to ports, but not yet processing connections.
+. Start the replica manager
+. Start the controller (it may, or may not become the _active_ controller)
+. Start the admin manager, coordinators, authoriser and fetch manager
+. Start processing requests
+
+
+
+### Crash
+## ReplicaManager
+## RSM
+## GroupCoordinator
+
+
+
+## TxnCoordinator
+## GroupCoordinator
+
+
+Unclean leader election
+
+Consequences:
+
+* Producer may receive InvalidSequenceNumber since it will have got out of sync with the data in the (truncated) log.
+  The solution is to just restart that producer, which will get a new <PID, ProducerEpoch> pair so that further producer requests are accepted.

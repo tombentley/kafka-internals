@@ -27,6 +27,25 @@ If SASL is being used then `SASL_HANDSHAKE` and `SASL_AUTHENTICATE` are exchange
 This is done using `METADATA` requests.
 One response with the information about the live brokers is enough to bootstrap the client, but clients typically make more later as the state of the client and cluster changes. 
 
+.Simplified bootstraping RPCs for a single broker
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  //autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  client  -> broker [label = "API_VERSIONS"];
+  client <-- broker;
+  client  -> broker [label = "SASL_HANDSHAKE"];
+  client <-- broker;
+  client  -> broker [label = "SASL_AUTHENTICATE"];
+  client <-- broker;
+  client  -> broker [label = "METADATA"];
+  client <-- broker;
+}
+....
+
 The process described above is common to all _Apache_ Kafka clients.
 Other client libraries sometimes work slightly differently.
 For example, a Sarama client has to be configured with the version of the broker it is talking to and uses a hard-coded mapping from "broker version" to supported API versions. 
@@ -131,6 +150,9 @@ S(Kafka): SaslAuthenticate(error_code=0, sasl_auth_bytes=) // empty       <2>
 <1> Encapsulated in a Kafka request
 <2> Encapsulated in a Kafka response
 
+
+
+
 [id=SaslAuthenticateRequest]
 [source,javascript]
 .The `SASL_AUTHENTICATE` request
@@ -208,23 +230,36 @@ When a partition doesn't have a leader its `LeaderId` will be -1.
 ## Summary
 
 A "typical" client bootstrapping exchange looks like this:
-[source]
-.Typical successful client bootstrapping
-----
-C: ApiVersions v3
-S: ApiVersions v3 (ErrorCode=0,
-                   ApiKeys=[{ApiKey=SaslHandshake, Min=0, Max=1},
-                            {ApiKey=SaslAuthenticate, Min=0, Max=2},
-                            {ApiKey=Metadata, Min=0, Max=11}, ...])
-C: SaslHandshake v1 (Mechanism=plain)
-S: SaslHandshake v1 (ErrorCode=0)
-C: SaslAuthenticate v2 (sasl_auth_bytes=<NUL>tim<NUL>tanstaaftanstaaf)
-S: SaslAuthenticate v2 (ErrorCode=0, sasl_auth_bytes=) // empty
-C: Metadata v11 ()
-S: Metadata v11 (ErrorCode=0, Brokers=...)
-----
 
-And whenever a client is disconnected from a broker we'd expect to see the same pattern, minus the metadata request/response.
+.Example sequence of RPCs for a bootstrapping producer
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 400;  // default value is 192
+  span_height = 15;  // default value is 40
+  client  -> broker0 [label = "API_VERSIONS"];
+  client <-- broker0 [label = "ApiKeys=[{ApiKey=0, ...}, ...]"];
+  client  -> broker0 [label = "SASL_HANDSHAKE mechanism=plain"];
+  client <-- broker0 [label = "error_code=0", note = "plain is enabled"];
+  client  -> broker0 [label = "SASL_AUTHENTICATE sasl_auth_bytes=..."];
+  client <-- broker0 [label = "error_code=0", note = "correct password"];
+  client  -> broker0 [label = "METADATA"];
+  client <-- broker0 [label = "brokers=[..., {id=1, ...}, ...]"];
+
+  client  -> broker1 [label = "API_VERSIONS", note = "API_VERSIONS and authentication\nrepeated on every connection"];
+  client <-- broker1 [label = "ApiKeys=[{ApiKey=0, ...}, ...]"];
+  client  -> broker1 [label = "SASL_HANDSHAKE mechanism=plain"];
+  client <-- broker1 [label = "error_code=0", note = "plain is enabled"];
+  client  -> broker1 [label = "SASL_AUTHENTICATE sasl_auth_bytes=..."];
+  client <-- broker1 [label = "error_code=0", note = "correct password"];
+  client  -> broker1 [label = "PRODUCE"];
+  client <-- broker1;
+}
+....
+
+And whenever a client is disconnected from a broker we'd expect to see the pattern from steps 9--14 (the broker might have been disconnected because the broker was being upgraded, so it cannot cache API_VERSIONS information between connections).
 
 
 ## Answers to the motivating questions

@@ -1,8 +1,13 @@
-= Slide Kafka internals
+= Kafka internals: Client bootstrapping
 :source-highlighter: highlightjs
 :icons: font
 :revealjs_hash: true
 :customcss: pres.css
+
+## Motivating questions
+
+* What does a producer need to do before it can start sending `PRODUCE` requests?
+* I saw my client trying to connect to `node=-2` in the logs. My cluster has no such broker! What does it mean?
 
 ## Participants
 // define client, broker, producer, consumer, follower, leader, controller, zk
@@ -71,7 +76,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/ResponseHead
 
 ### Throttling
 
-Although it's not part of the response header, must responses have a top-level field in the body called `ThrottleTimeMs`, which we'll discuss here.
+Although it's not part of the response header, most responses have a top-level field in the body called `ThrottleTimeMs`, which we'll discuss here.
 Brokers need to be able to throttle clients but they can't control how quickly clients send requests.
 Therefore the only mechanism the broker can use to throttle clients is to not return a response immediately when the client's quota is exceeded.
 This would be completely transparent to the client, so the `ThrottleTimeMs` field is used to inform the client that the response was delayed for the given amount of time.
@@ -96,6 +101,8 @@ In order to do this it needs:
 3. To discover information about the cluster, including the currently live brokers and information about certain topics of interest to the client.
 
 (Other client libraries sometimes work slightly differently.)
+
+// TODO logs showing connection to broker -1
 
 ## API versions
 
@@ -159,7 +166,7 @@ supportedFeatures=[], finalizedFeaturesEpoch=0, finalizedFeatures=[])
 
 2. If the broker supports that mechanism the client follows with one or more `SASL_AUTHENTICATE` requests wrapping the SASL frames.
 
-3. `SASL_HANDSHAKE` v0 didn't use `SASL_AUTHENTICATE`, but send non-wrapped SASL
+3. `SASL_HANDSHAKE` v0 didn't use `SASL_AUTHENTICATE`, but sent non-wrapped SASL frames.
 
 ### Example successful auth
 
@@ -208,10 +215,10 @@ and brokers MetadataBroker(0,null,Map(
     for correlation id 7 to client console-producer (kafka.server.KafkaApis)
 ....
 <1> 5=LEADER_NOT_AVAILABLE (topic created by side-effect)
-<2> not partition because topic was created
+<2> no partitions because topic is still being created
 
 
-## Summary
+## So far...
 
 Typical successful client bootstrapping
 
@@ -231,3 +238,25 @@ S: SaslAuthenticate v2 (ErrorCode=0,
 C: Metadata v11 ()
 S: Metadata v11 (ErrorCode=0, Brokers=...)
 ----
+
+### ...What next?
+
+* So at this point the client knows about the live brokers in the cluster
+* When it connects to then it will need to perform some of the same requests
+  - ApiVersions
+  - SaslHandShake and SaslAuthenticate
+* It will need to do this every time it reconnects to that broker too?
+  Because, in general, a disconnection could be due to a broker restart during an upgrade.
+  And brokers might not all be running the same version.
+
+## Summary
+
+* We've covered how clients (producers, consumer and admin clients) make their initial connections to the cluster.
+
+### Answers
+
+What does a producer need to do before it can start sending `PRODUCE` requests?::
+Discover the whole of the cluster, authenticate to brokers, know how to talk to them.
+
+I saw my client trying to connect to `node=-2` in the logs. My cluster has no such broker! What does it mean?::
+It's trying to connect to the 2nd bootstrap broker in it's list.

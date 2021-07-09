@@ -1,0 +1,79 @@
+# Controller
+
+Until now we've happily talked about topics and partitions, leaders and followers without considering where these things come from, or how they're managed.
+For Kafka to work there needs to be a way to manage these and other concerns, and that's the job of the controller.
+
+The nature of the controller has changed with the transition from ZooKeeper-based clusters to ones using Kraft, but certain things remain constant:
+
+* The controller is network accessible, handling administrative requests.
+* The actual work is done on a single thread, which makes thread safety and semantics much simpler to reason about.
+
+Things that have changed include:
+
+* With ZooKeeper the controller is always one of the brokers and any broker is eligible to be the controller. 
+With Kraft, there's more flexibility, and a dedicated pool of servers can be used for the Raft quorum with the leader of the quorum being the controller. 
+* Where persistent data is stored: With ZooKeeper this was always in znodes. 
+With Kraft a special log file is used.
+
+// TODO ISR and metadata
+// TODO broker shutdown
+
+// TODO topic creation
+// TODO topic deletion
+// TODO configs
+
+// TODO controller architecture
+
+## Reassignment
+
+// TODO note difference between purgatory-style IO thread decoupling and the explicitly asynchronous API for reassignment.
+
+
+
+.The Replica State Machine
+[smcat]
+....
+NewReplica,
+OnlineReplica,
+OfflineReplica,
+ReplicaDeletionStated,
+ReplicaDeletionSuccessful,
+ReplicaDeletionIneligible,
+NonexistentReplica;
+
+NewReplica                => OnlineReplica             : "in assigned replicas";
+NewReplica                => OfflineReplica            : "hosting broker dies";
+OnlineReplica             => OfflineReplica            : "hosting broker dies";
+OnlineReplica             => OnlineReplica             ;
+OfflineReplica            => OnlineReplica             ;
+OfflineReplica            => OfflineReplica            ;
+OfflineReplica            => ReplicaDeletionStated     : "deletion started";
+ReplicaDeletionStated     => ReplicaDeletionSuccessful : "no error";
+ReplicaDeletionStated     => ReplicaDeletionIneligible : "error";
+OfflineReplica            => ReplicaDeletionIneligible ;
+ReplicaDeletionIneligible => OnlineReplica             ;
+ReplicaDeletionIneligible => OfflineReplica            : "hosting broker dies";
+ReplicaDeletionSuccessful => NonexistentReplica        : "deleted";
+NonexistentReplica        => NewReplica                : "created";
+....
+
+
+## Controller architecture: `PartitionStateMachine`
+
+.The Partition State Machine
+[smcat]
+....
+initial,
+ NonExistentPartition,
+ NewPartition,
+ OnlinePartition,
+ OfflinePartition;
+
+initial              => NonExistentPartition;
+OfflinePartition     => NonExistentPartition : "deleted";
+NonExistentPartition => NewPartition         : "created";
+NewPartition         => OnlinePartition      : "leader elected";
+OfflinePartition     => OnlinePartition      : "new leader elected";
+NewPartition         => OfflinePartition;
+OnlinePartition      => OfflinePartition     : "leader dies";
+....

@@ -1,0 +1,42 @@
+# Kafka internals: Kafka producer
+:source-highlighter: highlightjs
+:icons: font
+:revealjs_hash: true
+:customcss: pres.css
+
+## Motivating questions
+
+. What is the only Kafka RPC request that lacks a response?
+. Can a zombie idempotent producer get fenced?
+. What producer-related state resides on a partition leader?
+. How are zombie producers prevented from writing duplicate records?
+. Which broker acts as transaction coordinator?
+. What is a control batch used for?
+. What logs might be needed to resolve a problem with transactions?
+
+## The simple producer
+
+Having done bootstrapping the simple producer can just start sending produce requests.
+
+## Producer architecture
+
+[source]
+....
+              +---------------+        +-------------+
+    send()--> | KafkaProducer | -----> | Partitioner |
+              +---------------+        +-------------+
+                |         |
+                V         +---------------------+ 
++-------------------+     |                     |
+| RecordAccumulator |     |                     |
++-------------------+     |                     |
+                ^         V                     V
+                |    +--------+         +------------------+
+                +--- | Sender | ------> | ProducerMetadata |
+                     +--------+         +------------------+
+                          |
+                          V
+                  +---------------+
+                  | NetworkClient | --> to network
+                  +---------------+
+....

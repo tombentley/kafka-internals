@@ -299,7 +299,7 @@ This is basically the same `InitProducerIdRequest` we've seen for the idempotent
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 400;  // default value is 192
+  edge_length = 250;  // default value is 192
   span_height = 15;  // default value is 40
   app       ->> producer [label="initTransactions()"];
   producer  -> "any broker" [label = "FIND_COORDINATORS TransactionalId=myId"];
@@ -359,7 +359,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/AddPartition
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 400;  // default value is 192
+  edge_length = 250;  // default value is 192
   span_height = 15;  // default value is 40
   app       ->> producer [label="send(topic=foo, partition=0)"];
   producer  -> "txn_coordinator" [label = "ADD_PARTITIONS_TO_TXN TransactionalId=myId partition=foo-0"];
@@ -440,7 +440,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/TxnOffsetCom
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 400;  // default value is 192
+  edge_length = 200;  // default value is 192
   span_height = 15;  // default value is 40
   app       ->> consumer [label="groupMetadata()"];
   app      <<-- consumer;
@@ -509,7 +509,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/WriteTxnMark
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 400;  // default value is 192
+  edge_length = 200;  // default value is 192
   span_height = 15;  // default value is 40
   app       ->> producer [label="commitTransaction()"];
   producer  -> "txn_coordinator" [label = "END_TXN commit=true"];

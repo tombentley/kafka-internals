@@ -57,7 +57,7 @@ include::../kafka-sources/clients/src/main/resources/common/message/FetchRespons
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 250;  // default value is 192
+  edge_length = 600;  // default value is 192
   span_height = 15;  // default value is 40
   consumer  -> "leader(foo,0)" [label = "FETCH partition=foo-0 FetchOffset=0"];
   consumer <-- "leader(foo,0)" [label = "records 0..9"];
@@ -80,7 +80,7 @@ Most subsequent requests from the client can pass the `SessionId` instead of the
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 250;  // default value is 192
+  edge_length = 600;  // default value is 192
   span_height = 15;  // default value is 40
   consumer  -> "leader(foo,0)" [label = "FETCH partition=foo-0 FetchOffset=0 SessionId=0 SessionEpoch=0"];
   consumer <-- "leader(foo,0)" [label = "records 0..9 SessionId=101"];
@@ -108,16 +108,52 @@ NOTE: The term "follower fetch" is ambiguous.
 It could refer to the fetching done by a follower, or fetching from a follower by a consumer.
 Here we mean the latter.
 
-Usually consumers will fetch from the partition leader, since that will result in the smallest end-to-end latency. 
+Usually consumers will fetch from the partition leader, since that will result in the smallest end-to-end latency (and the best use of page cache across the cluster). 
 However, KIP-392 added support for consumers to fetch from followers. 
-This can be beneficial when the consumer is in a different rack to the leader, but the same rack as a follower, and there are significant (financial or performance) costs to fetching between racks.
+This can be beneficial when the consumer is in a different rack (availability zone) to the leader, but the same rack as a follower, and there are significant (financial or performance) costs to fetching between racks.
 
 The basic idea is that the consumer includes `RackId` in its request and the broker's response will include, in addition to the requested data, a `PreferredReadReplica` nominating a broker in that rack to serve future fetch requests. 
+
+// TODO sequence diagram
 
 
 ### Consumer offset management (`OFFSET_COMMIT` and `OFFSET_FETCH`)
 
 // TODO OFFSET_COMMIT, OFFSET_FETCH)
+
+The consumer is in charge of the offsets used in its `FETCH` requests.
+It can thus read records in any order, but obvious the vast majority of application are interested in reading records sequentially forwards.
+Since consumer applications usually have side effects it's common for the application to be need to store the offset of records it  last consumed between restarts.
+While not required, it's common and convenient to store these offsets in a special Kafka topic, called `__consumer_offsets`.
+Rather than using a `PRODUCE` request to `__consumer_offsets` for appending to this log, there is a dedicated RPC for committing offsets.
+
+[id=OffsetCommitRequest]
+[source,javascript]
+.The `OFFSET_COMMIT` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/OffsetCommitRequest.json[lines=16..-1]
+----
+
+[id=OffsetCommitResponse]
+[source,javascript]
+.The `OFFSET_COMMIT` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/OffsetCommitResponse.json[lines=16..-1]
+----
+
+[id=OffsetFetchRequest]
+[source,javascript]
+.The `OFFSET_FETCH` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/OffsetFetchRequest.json[lines=16..-1]
+----
+
+[id=OffsetFetchResponse]
+[source,javascript]
+.The `OFFSET_FETCH` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/OffsetFetchResponse.json[lines=16..-1]
+----
 
 // cf. TXN_OFFSET_COMMIT
 **TODO**
@@ -137,7 +173,7 @@ Group membership allows a collection of consumer processes with the same `group.
 It copes with members and brokers coming and going.
 
 ### Coordinator discovery (again)
-For each group a single broker, known as the group coordinator, is responsible for managing the group management protocol. 
+For each group, a single broker, known as the group coordinator, is responsible for facilitating the group management protocol. 
 Before a client can join a group it needs to discover the group coordinator. 
 This uses the same <<coordinator-discovery>> mechanism described for the transactional producer:
 The consumer asks an arbitrary broker for it's coordinator, and the coordinator uses a hash of the `group.id`, to determine a partition of `__consumer_offsets`; the leader of that partition is the coordinator.
@@ -154,7 +190,7 @@ After a client has discovered the group coordinator, the client sends the coordi
 include::../kafka-sources/clients/src/main/resources/common/message/JoinGroupRequest.json[lines=16..-1]
 ----
 
-The coordinator waits for up to the rebalance timeout until all it has received a `JOIN_GROUP` request from all the other members.
+The coordinator waits for up to the rebalance timeout, hopefully allowing all the other members to send `JOIN_GROUP` requests.
 The coordinator then selects a protocol which is supported by all members of the group.
 
 The coordinator then selects a leader at random and sends a `JOIN_GROUP` response in reply to the pending requests. 
@@ -178,34 +214,23 @@ A member which joins but doesn't support any protocols supported by the rest of 
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 250;  // default value is 192
+  edge_length = 300;  // default value is 192
   span_height = 15;  // default value is 40
-  consumer1; consumer2; "any broker"; "grp_coordinator\n(broker 12)";
+  consumer1; consumer2; "any broker"; "broker 12\n(coordinator)";
   consumer1  -> "any broker" [label = "FIND_COORDINATORS type=group id=myGroupId"];
   consumer1 <-- "any broker" [label = "coordinator=12"];
-  consumer1  -> "grp_coordinator\n(broker 12)" [label = "JOIN_GROUP"];
+  consumer1  -> "broker 12\n(coordinator)" [label = "JOIN_GROUP metadata=123"];
   consumer2  -> "any broker" [label = "FIND_COORDINATORS type=group id=myGroupId"];
   consumer2 <-- "any broker" [label = "coordinator=12"];
-  consumer2  -> "grp_coordinator\n(broker 12)" [label = "JOIN_GROUP"];
-  consumer2 <-- "grp_coordinator\n(broker 12)" [label = "metadata=...", note = "after timeout"];
-  consumer1 <-- "grp_coordinator\n(broker 12)" [label = "metadata=null"];
+  consumer2  -> "broker 12\n(coordinator)" [label = "JOIN_GROUP metadata=456"];
+  "broker 12\n(coordinator)" -> "broker 12\n(coordinator)" [label="rebalance timeout"];
+  consumer2 <-- "broker 12\n(coordinator)" [label = "members={1->123, 2->456}"];
+  consumer1 <-- "broker 12\n(coordinator)" [label = "members=null"];
 }
 ....
 
+The join group response includes a group `GenerationId`, which the consumer passes in subsequence group-related requests and allows the coordinator to fence out zombie consumers.
 
-### Heartbeating and rebalancing.
-
-Once a client has joined the group it starts sending regular `HEARTBEAT` requests to the coordinator.
-This serves several purposes:
-
-* If the coordinator does not receive a heartbeat from a client before the session timeout the consumer is considered to be dead and the coordinator will initiate a rebalance.
-* If the coordinator received a `JOIN_GROUP` request from a prospective member since the last time it sent a heartbeat, the response will likewise tell an existing member that a rebalance is under way.
-* An existing member of the group can initiate a rebalance in the same way -- by sending a `JOIN_GROUP` request.
-
-The `HEARTBEAT` responses to the members use the `REBALANCE_IN_PROGRESS` error code to indicate a rebalance.
-Those clients have to rejoin the group within the rebalance timeout (measured from the point at which the failed client's session timed out).
-
-In this way a new generation of the group is started. 
 
 ### Syncing the group
 On receipt of the `JOIN_GROUP` response all the non-leaders will send `SYNC_GROUP` requests to the coordinator.
@@ -221,17 +246,112 @@ The coordinator then sends the non-leaders their assignments in the respective `
 seqdiag {
   default_fontsize = 16;
   autonumber = True;
-  edge_length = 250;  // default value is 192
+  edge_length = 300;  // default value is 192
   span_height = 15;  // default value is 40
-  consumer1; consumer2; "grp_coordinator\n(broker 12)";
+  consumer1; "consumer2\n(leader)"; "broker 12\n(coordinator)";
   
-  consumer1 -> "grp_coordinator\n(broker 12)" [label = "SYNC_GROUP"];
-  consumer2 -> "grp_coordinator\n(broker 12)" [label = "SYNC_GROUP assignments=1->foo, 2->bar"];
-  consumer1 <-- "grp_coordinator\n(broker 12)" [label = "assignments=foo"];
-  consumer2 <-- "grp_coordinator\n(broker 12)" [label = "assignments=bar"];
+  consumer1 -> "broker 12\n(coordinator)" [label = "SYNC_GROUP assignments=null"];
+  "consumer2\n(leader)" -> "broker 12\n(coordinator)" [label = "SYNC_GROUP assignments={1->foo, 2->bar}"];
+  consumer1 <-- "broker 12\n(coordinator)" [label = "assignments=foo"];
+  "consumer2\n(leader)" <-- "broker 12\n(coordinator)" [label = "assignments=bar"];
 }
 ....
 
+
+[id=SyncGroupRequest]
+[source,javascript]
+.The `SYNC_GROUP` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/SyncGroupRequest.json[lines=16..-1]
+----
+
+[id=SyncGroupResponse]
+[source,javascript]
+.The `SYNC_GROUP` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/SyncGroupResponse.json[lines=16..-1]
+----
+
+
+### Heartbeating and rebalancing.
+
+Once a client has joinedreceived a JOIN_GROUP response it starts sending regular `HEARTBEAT` requests to the coordinator.
+This serves several purposes:
+
+* If the coordinator does not receive a heartbeat from a client before the session timeout the consumer is considered to be dead and the coordinator will initiate a rebalance.
++
+.Sequence of RPCs showing a group coordinator detecting failure of/partition from a member
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 300;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer1; consumer2; "broker 12\n(coordinator)";
+  
+  consumer1 ->  "broker 12\n(coordinator)" [label = "HEARTBEAT", failed, color=red];
+  "broker 12\n(coordinator)" -> "broker 12\n(coordinator)" [label = "consumer1 heartbeat timeout"]
+  consumer2 ->  "broker 12\n(coordinator)" [label = "HEARTBEAT"];
+  consumer2 <-- "broker 12\n(coordinator)" [label = "error=REBALANCE_IN_PROGRESS"];
+} 
+....
++
+.Sequence of RPCs showing a group member detecting failure of/partition from the coordinator
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 300;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer1; "broker 12\n(coordinator)";
+  
+  consumer1 -> "broker 12\n(coordinator)" [label = "HEARTBEAT"];
+  consumer1 <--"broker 12\n(coordinator)" [failed, color=red];
+  consumer1 -> consumer1 [label = "coordinator heartbeat timeout", note="Consumer resumes from ??JOIN_GROUP??"];
+} 
+....
+
+* If the coordinator received a `JOIN_GROUP` request from a prospective member since the last time it sent a heartbeat, the response will likewise tell an existing member that a rebalance is under way.
++
+.Sequence of RPCs showing a rebalance initiated by a new or existing member (`consumer1`) (re-)joining an established group in the `Stable` state
+[seqdiag, fontpath="/usr/share/fonts/truetype/inconsolata/Inconsolata-Bold.ttf"]
+....
+seqdiag {
+  default_fontsize = 16;
+  autonumber = True;
+  edge_length = 300;  // default value is 192
+  span_height = 15;  // default value is 40
+  consumer1; consumer2; "broker 12\n(coordinator)";
+  consumer1 ->  "broker 12\n(coordinator)" [label = "JOIN_GROUP"];
+  consumer1 <-- "broker 12\n(coordinator)";
+  consumer2 ->  "broker 12\n(coordinator)" [label = "HEARTBEAT"];
+  consumer2 <-- "broker 12\n(coordinator)" [label = "error=REBALANCE_IN_PROGRESS"];
+  consumer2 ->  "broker 12\n(coordinator)" [label = "JOIN_GROUP"];
+  } 
+....
+
+* An existing member of the group can initiate a rebalance in the same way -- by sending a `JOIN_GROUP` request.
+
+The `HEARTBEAT` responses to the members use the `REBALANCE_IN_PROGRESS` error code to indicate a rebalance.
+Those clients have to rejoin the group within the rebalance timeout (measured from the point at which the failed client's session timed out).
+
+In this way a new generation of the group is started. 
+
+[id=HeartbeatRequest]
+[source,javascript]
+.The `HEARTBEAT` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/HeartbeatRequest.json[lines=16..-1]
+----
+
+[id=HeartbeatResponse]
+[source,javascript]
+.The `HEARTBEAT` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/HeartbeatResponse.json[lines=16..-1]
+----
 
 ### Offset commit
 
@@ -310,7 +430,7 @@ The previous section described the group membership protocol, which allows a gro
 
 This section now goes into how the group state protocol, embedded within the `JOIN_GROUP` and `SYNC_GROUP` APIs, allows members of the group to partition "work" between them. The group state protocol is sometimes known as the "embedded protocol".
 
-What constitutes work depends on the application:
+What constitutes "work" depends on the application:
 
 * For the consumer it is the partitions to be consumed by the members of the group.
 
@@ -320,14 +440,13 @@ In either case the `JOIN_GROUP` request from each member will contain a `Subscri
 The `Subscription` from each member may be the same or different to other members.
 The group leader receives the Subscriptions from all the members in the group once the group is established. 
 The leader gets to divide the subscriptions between the members of the group and returns an `Assignment` to each member. 
-An `Assignment` represents a members share of the work to be done. 
+An `Assignment` represents a member's share of the work to be done. 
 
 The separation of membership and state is possible because only the group members need to understand the group state.
 The group state is opaque to coordinators and therefore:
 
-* Coordinators cannot validate that completed work be being marked as done by the member which was assigned it (e.g. offsets are being committed). Instead clients are required to be bug-free in this respect to avoid work being done again following a rebalance.
+* Coordinators cannot validate that completed work is be being marked as done by the member which was assigned it (e.g. offsets are being committed). Instead clients are required to be bug-free in this respect to avoid work being done again following a rebalance.
 * Coordinators cannot invalidate assignments when the topic's metadata changes, pushing this problem onto the client.
-
 
 How a group works in a client (Consumer, Kafka Connect, Kafka Streams) depends on the  `AbstractCoordinator` implementation, which is responsible for generating all the group protocol requests, and handling all the responses, used by the client. That is, it:
 
@@ -339,7 +458,7 @@ The Kafka Consumer and Kafka Connect use separate `AbstractCoordinator` implemen
 * For the consumer it is a partitioning of the subscribed topic partitions
 * For a Connect worker it is a partitioning of the tasks created by the connectors
 
-`AbstractCoordinator.metadata()` supplies the _protocols_ which get send in the <<JoinGroup>> request.
+`AbstractCoordinator.metadata()` supplies the _protocols_ which get sent in the <<JoinGroup>> request.
 
 // TODO elaborate on these classes a little.
 
@@ -442,7 +561,9 @@ KIP-345
 
 ## Consumer architecture: `AbstractCoordinator`
 
-.The group `MemberState` state Machine
+// TODO Pipelining fetch requests
+
+.The group `MemberState` state machine
 [smcat]
 ....
 Unjoined,

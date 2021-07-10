@@ -265,6 +265,13 @@ They have to manage extra broker-side state for the clients they're coordinating
 
 3. The client receives a `FIND_COORDINATOR` response and starts talking to this coordinator.
 
+Why does this computation have to be done on a broker? 
+The client knows (or could obtain via a `METADATA` request) the leader of the partition and perform this calculation itself. 
+The broker-side handling allows the topic to be created if it doesn't exist.
+Since these are internal topics they cannot be created via the `CREATE_TOPICS` API.
+// TODO is this really the only reason?
+ 
+
 #### `FindCoordinatorRequest`
 
 [id=FindCoordinatorRequest]
@@ -283,8 +290,10 @@ include::../kafka-sources/clients/src/main/resources/common/message/FindCoordina
 include::../kafka-sources/clients/src/main/resources/common/message/FindCoordinatorResponse.json[lines=16..-1]
 ----
 
-This mechanism ensures that all the state on the broker about that client can be persistect to the log, and log replication ensures that should the broker crash the new leader will have access to exactly the same state.
+This mechanism ensures that all the state on the broker about that client can be persisted to the log, and log replication ensures that should the broker crash the new leader will have access to exactly the same state.
 In this way the transaction and group coordinatorship is a role which can migrate between brokers (because it's tied to partition leadership).
+
+
 
 ### Obtaining an transactional Producer Id (PID)
 

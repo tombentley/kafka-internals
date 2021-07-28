@@ -353,10 +353,26 @@ include::../kafka-sources/clients/src/main/resources/common/message/HeartbeatReq
 include::../kafka-sources/clients/src/main/resources/common/message/HeartbeatResponse.json[lines=16..-1]
 ----
 
+### Leaving a group
+
+[id=LeaveGroupRequest]
+[source,javascript]
+.The `LEAVE_GROUP` request
+----
+include::../kafka-sources/clients/src/main/resources/common/message/LeaveGroupRequest.json[lines=16..-1]
+----
+
+[id=LeaveGroupResponse]
+[source,javascript]
+.The `LEAVE_GROUP` response
+----
+include::../kafka-sources/clients/src/main/resources/common/message/LeaveGroupResponse.json[lines=16..-1]
+----
+
 ### Offset commit
 
-In order to avoid commits from zombies, <<OffsetCommit>> requests include the group generation id.
-The coordinator receives the <<OffsetCommit>> request and validates the generation id.
+In order to avoid commits from zombies, <<OffsetCommitRequest>> requests include the group generation id.
+The coordinator receives the <<OffsetCommitRequest>> request and validates the generation id.
 If the generation is not current then the offsets are not committed.
 
 ### State machine
@@ -369,14 +385,14 @@ The coordinator maintains a state machine with the following states:
   * `Empty` if all members have left the group
   * `Dead` if the coordinator ceases to be leader for the coordinating partition (see <<coordinator-discovery>>).
 
-`CompletingRebalance`:: The group is awaiting for state assignment (<<SyncGroup>>) from the group leader.
+`CompletingRebalance`:: The group is awaiting for state assignment (<<SyncGroupRequest>>) from the group leader.
   Transitions to:
-  * `Stable` if the coordinator receives a <<SyncGroup>> from the group leader.
-  * `PreparingRebalance` if the coordinator receives a <<JoinGroup>> from a new member, or an existing member with new metadata; or if the coordinator receives a <<LeaveGroup>> from an existing member; or if member failure is detected (heartbeat timeout)
+  * `Stable` if the coordinator receives a <<SyncGroupRequest>> from the group leader.
+  * `PreparingRebalance` if the coordinator receives a <<JoinGroupRequest>> from a new member, or an existing member with new metadata; or if the coordinator receives a <<LeaveGroupRequest>> from an existing member; or if member failure is detected (heartbeat timeout)
   * `Dead` if the coordinator ceases to be leader for the coordinating partition (see <<coordinator-discovery>>).
 
 `Stable`:: Transitions to:
-  * `PreparingRebalance` if the coordinator receives a <<JoinGroup>> from a new member, or an existing member with new metadata; or if the coordinator receives a <<LeaveGroup>> from an existing member; or if member failure is detected (heartbeat timeout)
+  * `PreparingRebalance` if the coordinator receives a <<JoinGroupRequest>> from a new member, or an existing member with new metadata; or if the coordinator receives a <<LeaveGroupRequest>> from an existing member; or if member failure is detected (heartbeat timeout)
 
 `Dead`:: 
   There are no active members; the group metadata is being cleaned up.
@@ -419,7 +435,7 @@ The coordinator stores the group generation, leader etc in the group topic (e.g.
 If the coordinator fails the new leader of the group topic can read these state from its replica and carry on performing the coordinator role.
 In effect the coordinator has migrated from the crashed broker to a live broker.
 
-The clients detect failure of the coordinator because they don't receive a <<Heartbeat>> response within the session timeout, so they will find the new coordinator and start sending their heartbeats to it.
+The clients detect failure of the coordinator because they don't receive a <<HeartbeatResponse>> response within the session timeout, so they will find the new coordinator and start sending their heartbeats to it.
 There is no need for the clients to perform the group membership or state protocols.
 
 // TODO define what records are written to __consumer_state
@@ -450,20 +466,20 @@ The group state is opaque to coordinators and therefore:
 
 How a group works in a client (Consumer, Kafka Connect, Kafka Streams) depends on the  `AbstractCoordinator` implementation, which is responsible for generating all the group protocol requests, and handling all the responses, used by the client. That is, it:
 
-* generates the  <<JoinGroup>> requests (including the necessary use data for each protocol the client can use)
-* generates the <<SyncGroup>> request where the leader decides on the group state.
+* generates the  <<JoinGroupRequest>> requests (including the necessary use data for each protocol the client can use)
+* generates the <<SyncGroupRequest>> request where the leader decides on the group state.
 
 The Kafka Consumer and Kafka Connect use separate `AbstractCoordinator` implementations,`ConsumerCoordinator` and `WorkerCoordinator` respectively, because their group state differs:
 
 * For the consumer it is a partitioning of the subscribed topic partitions
 * For a Connect worker it is a partitioning of the tasks created by the connectors
 
-`AbstractCoordinator.metadata()` supplies the _protocols_ which get sent in the <<JoinGroup>> request.
+`AbstractCoordinator.metadata()` supplies the _protocols_ which get sent in the <<JoinGroupRequest>> request.
 
 // TODO elaborate on these classes a little.
 
 For the `ConsumerCoordinator` there's another level of pluggability via the `ConsumerPartitionAssignor`. It's at the `ConsumerPartitionAssignor` level that Kafka Streams differs from the plain Kafka Consumer.
-For the `ConsumerCoordinator` it's the assignors which correspond to the protocols in the <<JoinGroup>> request.
+For the `ConsumerCoordinator` it's the assignors which correspond to the protocols in the <<JoinGroupRequest>> request.
 
 https://www.youtube.com/watch?v=QaeXDh12EhE
 

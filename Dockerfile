@@ -21,3 +21,12 @@ RUN apk --update --no-cache add nodejs nodejs-npm \
 # Install seqdiag
 RUN apk --no-cache add python3 py3-pip  py3-pillow ttf-inconsolata \
   && pip install seqdiag
+
+# Support for pdf
+RUN gem install asciidoctor-pdf
+
+# # Support for epub (the checker requires java)
+# RUN gem install asciidoctor-epub3 epubcheck-ruby
+# RUN apk --no-cache add openjdk8-jre
+
+
